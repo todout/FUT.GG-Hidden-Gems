@@ -129,3 +129,11 @@ Un script de terminal para inspeccionar tus joyas o forzar la sincronización si
    - Nuevos botones `[▲ Comprimir lista de precios]` y `[▲ Cerrar]` para colapsar verticalmente la lista detallada de tiers si decides no listar una carta.
 4. **Diferenciación Visual de Cartas en Venta**:
    - Las cartas que ya están listadas en el mercado (`🚀 VENDIÉNDOSE`) ahora lucen un fondo verde esmeralda distintivo, borde iluminado y etiqueta especial para diferenciarse al instante de las cartas pendientes de listar.
+
+## 🚀 Novedades v1.9.2
+1. **Barra de Acciones en 1 Sola Línea**:
+   - Se trasladaron los controles secundarios (`[✓] Ocultar vendidas / fuera de club` y `[⚙️ Token]`) a la cabecera del panel (`.futgg-header`), situados justo al lado del botón de cerrar `[✕]`.
+   - La barra de herramientas ahora contiene únicamente los dos grupos principales (**Sync** y **Acciones en Lote**) en una sola línea continua, ahorrando espacio vertical en pantalla.
+2. **Botón de Actualizar Mercado Agrandado y Columna Compacta**:
+   - El botón de recarga `[🔄]` en la columna de Mercado en Vivo ahora es más grande y fácil de presionar.
+   - El botón de alternar desglose (`[▼ Ver N]` / `[▲ Comprimir]`) se ubicó verticalmente debajo del botón `[🔄]`, compartiendo la misma fila horizontal que los datos de precio mínimo y evitando que la fila de la tabla aumente de altura innecesariamente.

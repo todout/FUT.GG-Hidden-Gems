@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.9.1
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: auto-sincronización cada 15 min, auto-sync de club en FUT.GG al abrir sobres o tras cooldown de 30m, alertas de gemas nuevas, conteo de gemas en club/transferibles, escaneo humano y auto-listado inteligente.
+// @version      1.9.2
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: barra de acciones en 1 sola línea, controles compactos en cabecera, tabla con desglose colapsable bajo botón de actualizar, auto-sincronización cada 15 min y auto-sync tras sobres.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1653,17 +1653,18 @@
             #futgg-panel.hidden { display: none; }
 
             .futgg-header {
-                padding: 16px 20px;
+                padding: 12px 18px;
                 background: #131c28;
                 border-bottom: 1px solid #243346;
                 border-radius: 16px 16px 0 0;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
+                gap: 12px;
             }
             .futgg-header h2 {
                 margin: 0;
-                font-size: 18px;
+                font-size: 17px;
                 font-weight: 700;
                 color: #ffffff;
                 display: flex;
@@ -1683,14 +1684,14 @@
             .futgg-close-btn:hover { color: #ff5555; background: rgba(255,85,85,0.1); }
 
             .futgg-toolbar {
-                padding: 12px 20px;
-                background: #16202e;
-                border-bottom: 1px solid #243346;
+                padding: 8px 14px;
+                background: #111a26;
+                border-bottom: 1px solid #1f2e42;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                flex-wrap: wrap;
-                gap: 10px;
+                gap: 8px;
+                flex-wrap: nowrap;
             }
             .futgg-btn {
                 background: #1f2c3d;
@@ -2387,43 +2388,36 @@
         panel.innerHTML = `
             <div class="futgg-header">
                 <h2>💎 Joyas Ocultas de FUT.GG & Auto-Listador</h2>
-                <button class="futgg-close-btn" id="futgg-close-btn">&times;</button>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <label style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; cursor:pointer; background:#162232; border:1px solid #23344a; padding:4px 10px; border-radius:6px; user-select:none;" title="Ocultar jugadores que ya no tienes en tu club o que ya fueron vendidos">
+                        <input type="checkbox" id="futgg-hide-sold-toggle" checked style="cursor:pointer; accent-color:#00ff88;" />
+                        <span>Ocultar vendidas / fuera de club (<b id="futgg-hidden-count" style="color:#00ff88;">0</b>)</span>
+                    </label>
+                    <button class="futgg-btn" id="futgg-toggle-token-btn" style="padding:4px 10px; font-size:11px;" title="Configuración de Token JWT de FUT.GG">⚙️ Token</button>
+                    <button class="futgg-close-btn" id="futgg-close-btn" title="Cerrar">&times;</button>
+                </div>
             </div>
-            <div class="futgg-toolbar" style="display:flex; flex-direction:column; gap:8px; padding:10px 14px; background:#111a26; border-bottom:1px solid #1f2e42;">
-                <!-- Fila 1: Grupos de Acciones Principales -->
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <!-- Grupo Sincronización -->
-                    <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
-                        <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Sync:</span>
-                        <button class="futgg-btn primary" id="futgg-refresh-btn" style="padding:5px 10px; font-size:11px;" title="Descarga de FUT.GG las joyas ocultas actuales (Auto-check cada 15 min)">🔄 Cargar Joyas</button>
-                        <button class="futgg-btn" id="futgg-sync-club-remote-btn" style="padding:5px 10px; font-size:11px; border-color:#ff5500; color:#ff7733;" title="Envía la orden a FUT.GG para leer tu club de EA (Equivalente al botón Sync Club de su web)">☁️ Sync Club</button>
-                        <button class="futgg-btn" id="futgg-scan-club-btn" style="padding:5px 10px; font-size:11px;" title="Comprueba si las joyas están en tu inventario local (Club, Transferibles, Sin Asignar)">🔍 Escanear Club</button>
-                    </div>
-
-                    <!-- Grupo Acciones en Lote -->
-                    <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
-                        <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Acciones:</span>
-                        <button class="futgg-btn" id="futgg-batch-move-btn" style="padding:5px 10px; font-size:11px;" title="Mueve todas las joyas que tienes en el club a tu Lista de Transferibles">📥 Mover Todas</button>
-                        <button class="futgg-btn" id="futgg-batch-check-btn" style="padding:5px 10px; font-size:11px;" title="Revisa el precio de mercado de todas las cartas recorriendo todas las páginas (Tecla V)">📊 Chequear Mercado</button>
-                        <button class="futgg-btn" id="futgg-batch-list-btn" style="padding:5px 10px; font-size:11px; border-color:#00ff88; color:#00ff88; font-weight:700;" title="Pone a la venta en el mercado las cartas revisadas">🚀 Listar Todas</button>
-                    </div>
+            <div class="futgg-toolbar">
+                <!-- Grupo Sincronización -->
+                <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
+                    <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Sync:</span>
+                    <button class="futgg-btn primary" id="futgg-refresh-btn" style="padding:5px 10px; font-size:11px;" title="Descarga de FUT.GG las joyas ocultas actuales (Auto-check cada 15 min)">🔄 Cargar Joyas</button>
+                    <button class="futgg-btn" id="futgg-sync-club-remote-btn" style="padding:5px 10px; font-size:11px; border-color:#ff5500; color:#ff7733;" title="Envía la orden a FUT.GG para leer tu club de EA (Equivalente al botón Sync Club de su web)">☁️ Sync Club</button>
+                    <button class="futgg-btn" id="futgg-scan-club-btn" style="padding:5px 10px; font-size:11px;" title="Comprueba si las joyas están en tu inventario local (Club, Transferibles, Sin Asignar)">🔍 Escanear Club</button>
                 </div>
 
-                <!-- Fila 2: Filtros & Ajustes -->
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding-top:2px;">
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <label style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; cursor:pointer; background:#162232; border:1px solid #23344a; padding:4px 10px; border-radius:6px; user-select:none;" title="Ocultar jugadores que ya no tienes en tu club o que ya fueron vendidos">
-                            <input type="checkbox" id="futgg-hide-sold-toggle" checked style="cursor:pointer; accent-color:#00ff88;" />
-                            <span>Ocultar vendidas / fuera de club (<b id="futgg-hidden-count" style="color:#00ff88;">0</b>)</span>
-                        </label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:6px;">
-                        <div id="futgg-batch-controls" style="display:none; align-items:center; gap:8px;">
-                            <span id="futgg-batch-status" style="font-size:11px; color:#ffaa00; font-weight:bold;">Procesando...</span>
-                            <button class="futgg-btn danger" id="futgg-cancel-batch-btn" style="padding:3px 8px; font-size:10px;">Detener</button>
-                        </div>
-                        <button class="futgg-btn" id="futgg-toggle-token-btn" style="padding:4px 10px; font-size:11px;" title="Configuración de Token JWT de FUT.GG">⚙️ Token</button>
-                    </div>
+                <!-- Estado del lote / Batch si está en curso -->
+                <div id="futgg-batch-controls" style="display:none; align-items:center; gap:8px;">
+                    <span id="futgg-batch-status" style="font-size:11px; color:#ffaa00; font-weight:bold;">Procesando...</span>
+                    <button class="futgg-btn danger" id="futgg-cancel-batch-btn" style="padding:3px 8px; font-size:10px;">Detener</button>
+                </div>
+
+                <!-- Grupo Acciones en Lote -->
+                <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
+                    <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Acciones:</span>
+                    <button class="futgg-btn" id="futgg-batch-move-btn" style="padding:5px 10px; font-size:11px;" title="Mueve todas las joyas que tienes en el club a tu Lista de Transferibles">📥 Mover Todas</button>
+                    <button class="futgg-btn" id="futgg-batch-check-btn" style="padding:5px 10px; font-size:11px;" title="Revisa el precio de mercado de todas las cartas recorriendo todas las páginas (Tecla V)">📊 Chequear Mercado</button>
+                    <button class="futgg-btn" id="futgg-batch-list-btn" style="padding:5px 10px; font-size:11px; border-color:#00ff88; color:#00ff88; font-weight:700;" title="Pone a la venta en el mercado las cartas revisadas">🚀 Listar Todas</button>
                 </div>
             </div>
             <div id="futgg-token-panel" style="display:none; flex-direction:column; gap:6px;">
@@ -2963,7 +2957,7 @@
                 marketHtml = `
                     <div style="display:flex; align-items:center; gap:6px;">
                         <span class="futgg-tag extinct" title="No hay cartas activas en el mercado">💎 ¡Extinta! (0 listadas)</span>
-                        <button class="futgg-btn" style="padding:2px 6px; font-size:10px;" data-action="check-market" data-eaid="${eaId}" title="Reintentar">🔄</button>
+                        <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Reintentar">🔄</button>
                     </div>
                 `;
             } else if (market && market.lowestBin) {
@@ -3012,7 +3006,7 @@
 
                 marketHtml = `
                     <div style="display:flex; flex-direction:column; gap:4px;">
-                        <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                             <div>
                                 ${market.hasOutlier
                         ? `<div><span style="font-size:10px; color:#ffaa00;">⚠️ Mín: ${formatCoins(market.lowestBin)} (1)</span></div><b style="color:#00ff88;">Piso Real: ${formatCoins(market.realisticBin)}</b>`
@@ -3022,11 +3016,13 @@
                                     ${market.count}${hasMore ? '+' : ''} activas | Dif: <span style="color:${diffColor}; font-weight:bold;">${diff >= 0 ? '+' : ''}${diff}</span>
                                 </div>
                             </div>
-                            <button class="futgg-btn" style="padding:2px 6px; font-size:10px;" data-action="check-market" data-eaid="${eaId}" title="Actualizar">🔄</button>
+                            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
+                                <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Actualizar mercado">🔄</button>
+                                <button class="futgg-btn" style="padding:2px 6px; font-size:9px; white-space:nowrap; ${isBreakdownOpen ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" data-action="toggle-breakdown" data-eaid="${eaId}" title="${isBreakdownOpen ? 'Comprimir lista' : 'Ver desglose de precios'}">
+                                    ${isBreakdownOpen ? '▲ Comprimir' : `▼ Ver ${market.tiers.length}`}
+                                </button>
+                            </div>
                         </div>
-                        <button class="futgg-btn" style="padding:3px 8px; font-size:10px; align-self:flex-start; ${isBreakdownOpen ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" data-action="toggle-breakdown" data-eaid="${eaId}">
-                            ${isBreakdownOpen ? '▲ Comprimir lista de precios' : `▼ Ver ${market.tiers.length} precios (${market.count}${hasMore ? '+' : ''})`}
-                        </button>
                         ${breakdownHtml}
                     </div>
                 `;
