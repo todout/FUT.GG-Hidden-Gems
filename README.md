@@ -106,9 +106,15 @@ Un script de terminal para inspeccionar tus joyas o forzar la sincronización si
 5. **Persistencia y auto-captura de Token FUT.GG perfeccionada**:
    - Almacenamiento seguro en Tampermonkey con recuperación garantizada y sin rechazos por desfase horario.
 
-## 🚀 Novedades v1.5.0
-1. **Solución al cartel de "Destination full / Lista llena"**:
-   - `listCardOnMarket` lista directamente mediante `services.Item.list` (como lo hace la Web App nativamente), sin forzar un `move` previo innecesario.
-   - **Interceptor DOM Activo (`MutationObserver`)**: Si EA intenta renderizar cualquier diálogo modal de "Destination full", el script lo suprime y cierra instantáneamente en <10ms.
-2. **Captura Robusta y Filtrado de Token FUT.GG**:
-   - Detecta y extrae exclusivamente el JWT de backend de Supabase (`futgg_jwt`), descartando los tokens temporales de sesión de Clerk (`__session` de 60 segundos).
+## 🚀 Novedades v1.9.0
+1. **Auto-Sincronización de Club al Abrir Sobres (Packs)**:
+   - El script intercepta de forma pasiva cuando abres sobres o compras packs en la Web App de EA FC 27.
+   - Si han transcurrido más de 30 minutos desde la última sincronización, dispara automáticamente el `Sync Club` en los servidores de FUT.GG para que detecte tus cartas nuevas de inmediato.
+   - Si aún estás en cooldown (< 30 min), programa la sincronización para ejecutarse automáticamente en cuanto el cooldown finalice.
+2. **Botón Directo `☁️ Sync Club FUT.GG` en la Web App**:
+   - Ahora puedes forzar la sincronización de tu club con FUT.GG directamente desde la Web App de EA con un solo clic, sin necesidad de ir a la página de FUT.GG.
+   - Si estás en la web de FUT.GG (`https://www.fut.gg/gg-club/...`), el helper también detecta y presiona el botón "Sync Club" automáticamente cuando está disponible.
+3. **Comprobación de Nuevas Joyas cada 15 Minutos**:
+   - Se redujo el intervalo de consulta de gemas de 30 a **15 minutos**. 1 sola petición GET cada 15 minutos es totalmente segura, indetectable y sin riesgo alguno de ban de IP.
+4. **Notificaciones de Token Optimizadas en FUT.GG**:
+   - El toast verde de sincronización de token se muestra únicamente una vez por sesión al entrar a FUT.GG; las renovaciones y lecturas posteriores operan 100% en silencio en segundo plano.

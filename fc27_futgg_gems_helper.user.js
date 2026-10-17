@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.8.1
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: auto-sincronización cada 30 min, alertas de gemas nuevas, conteo de gemas en club/transferibles, escaneo humano y auto-listado inteligente.
+// @version      1.9.0
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: auto-sincronización cada 15 min, auto-sync de club en FUT.GG al abrir sobres o tras cooldown de 30m, alertas de gemas nuevas, conteo de gemas en club/transferibles, escaneo humano y auto-listado inteligente.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -124,6 +124,8 @@
     // SI ESTAMOS EN FUT.GG: CAPTURA AUTOMÁTICA DEL TOKEN JWT
     // =========================================================================
     if (window.location.hostname.includes('fut.gg')) {
+        let hasShownSessionToast = false;
+
         function showFutGgToast(msg, isWarn = false) {
             let toast = document.getElementById('futgg-sync-toast');
             if (!toast) {
@@ -135,7 +137,7 @@
             toast.style.borderColor = isWarn ? '#ffaa00' : '#00ff88';
             toast.style.border = `2px solid ${isWarn ? '#ffaa00' : '#00ff88'}`;
             toast.textContent = msg;
-            setTimeout(() => { if (toast) toast.remove(); }, 6000);
+            setTimeout(() => { if (toast) toast.remove(); }, 5000);
         }
 
         function saveFoundToken(tok, source, refreshToken = null) {
@@ -158,15 +160,23 @@
                 return false;
             }
 
-            // Token genuino y vigente
+            // Guardar token genuino y vigente
             GM_setValue('futgg_jwt', tok);
             if (refreshToken) {
                 GM_setValue('futgg_refresh_token', refreshToken);
             }
             try { localStorage.setItem('futgg_jwt', tok); } catch (e) { }
 
-            console.log(`%c[FUT.GG Gems Helper] ¡Token de backend FUT.GG capturado desde ${source}! (${info.text})`, "color:#00ff88; font-weight:bold;");
-            showFutGgToast(`💎 FUT.GG Token sincronizado: ${info.text}`);
+            console.log(`%c[FUT.GG Gems Helper] Token FUT.GG activo desde ${source} (${info.text})`, "color:#00ff88; font-weight:bold;");
+
+            // Mostrar el toast ÚNICAMENTE una sola vez por sesión para confirmar la carga inicial.
+            // Las renovaciones y chequeos posteriores se ejecutan en silencio por detrás sin interrumpir al usuario.
+            const alreadyShown = hasShownSessionToast || sessionStorage.getItem('futgg_toast_shown') === '1';
+            if (!alreadyShown) {
+                hasShownSessionToast = true;
+                try { sessionStorage.setItem('futgg_toast_shown', '1'); } catch (e) { }
+                showFutGgToast(`💎 FUT.GG Token sincronizado: ${info.text}`);
+            }
             return true;
         }
 
@@ -211,6 +221,11 @@
 
         async function captureFutGgToken() {
             try {
+                // Verificar si ya tenemos un token activo y fresco (>5 minutos)
+                const currentTok = GM_getValue('futgg_jwt', '');
+                const curExp = getTokenExpiryInfo(currentTok);
+                const isTokenFresh = curExp.valid && !curExp.expired && (curExp.remainingSec == null || curExp.remainingSec > 300);
+
                 // 2. Intentar de localStorage / sessionStorage de fut.gg (Supabase auth session)
                 const storages = [localStorage, sessionStorage];
                 for (const st of storages) {
@@ -265,19 +280,45 @@
                     });
                 }
 
-                // 5. Ping de reactivación para obligar a la app de FUT.GG a renovar la sesión en segundo plano
-                try {
-                    fetch('https://www.fut.gg/api/gg-club/sync-status/', { credentials: 'include' });
-                } catch (e) { }
+                // 5. Ping de reactivación SOLO si no disponemos de un token fresco
+                if (!isTokenFresh) {
+                    try {
+                        fetch('https://www.fut.gg/api/gg-club/sync-status/', { credentials: 'include' });
+                    } catch (e) { }
+                }
 
             } catch (e) {
                 console.warn("[FUT.GG Gems Helper] Error capturando token en fut.gg:", e);
             }
         }
 
+        // Auto-clic inteligente en botón "Sync Club" si hay una sincronización pendiente por packs o pasaron 30 min
+        function checkAndClickFutGgSyncButton() {
+            try {
+                const isPending = GM_getValue('futgg_pending_sync_after_packs', false);
+                const lastSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
+                const elapsed = Date.now() - lastSync;
+                const cooldown = 30 * 60 * 1000;
+
+                // Solo actuar si hay sync pendiente o pasaron más de 30 min desde la última sincronización
+                if (!isPending && (elapsed < cooldown && lastSync !== 0)) return;
+
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const syncBtn = buttons.find(b => b.textContent && b.textContent.trim().toLowerCase() === 'sync club' && !b.disabled);
+                if (syncBtn) {
+                    console.log("%c[FUT.GG Gems Helper] ☁️ Presionando 'Sync Club' automáticamente en la web de FUT.GG...", "color:#00ff88; font-weight:bold;");
+                    syncBtn.click();
+                    GM_setValue('futgg_last_club_sync_timestamp', Date.now());
+                    GM_setValue('futgg_pending_sync_after_packs', false);
+                    showFutGgToast("☁️ ¡Club sincronizado con EA automáticamente!");
+                }
+            } catch (e) { }
+        }
+
         window.addEventListener('load', () => setTimeout(captureFutGgToken, 1000));
         setTimeout(captureFutGgToken, 1500);
-        setInterval(captureFutGgToken, 15000);
+        setInterval(captureFutGgToken, 60000); // Chequeo suave cada 60s
+        setInterval(checkAndClickFutGgSyncButton, 10000); // Auto-detección de Sync Club en fut.gg cada 10s
         return; // No ejecutar la UI de la Web App en la web de fut.gg
     }
 
@@ -296,8 +337,8 @@
         maxMarketPages: 30,          // Máximo de páginas a recorrer por carta (hasta 630 cartas)
         undercutAmount: 100,         // Descuento respecto al Lowest BIN (100 monedas para venta rápida)
         burstLimit: 10,              // Pausa de seguridad cada N búsquedas
-        burstPauseMs: 12000,         // Duración de la pausa de seguridad
-        autoSyncIntervalMs: 30 * 60 * 1000, // 30 minutos (límite oficial de refresco de FUT.gg)
+        autoSyncIntervalMs: 15 * 60 * 1000, // 15 minutos (comprobación frecuente y segura de gemas)
+        clubSyncCooldownMs: 30 * 60 * 1000, // 30 minutos (límite oficial de refresco de club en FUT.gg)
         get futggToken() {
             const gm = GM_getValue('futgg_jwt', '');
             if (gm && typeof gm === 'string' && gm.startsWith('ey')) return gm;
@@ -554,6 +595,79 @@
                     },
                     onerror: function (err) {
                         reject(new Error("Error de conexión con FUT.GG. Revisa tu conexión o abre fut.gg en otra pestaña."));
+                    }
+                });
+            });
+        },
+
+        getSyncStatus: async function () {
+            let token = CONFIG.futggToken;
+            return new Promise((resolve) => {
+                const headers = { 'Accept': 'application/json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: 'https://www.fut.gg/api/gg-club/sync-status/',
+                    headers: headers,
+                    withCredentials: true,
+                    onload: function (res) {
+                        try {
+                            if (res.status === 200) {
+                                const json = JSON.parse(res.responseText);
+                                resolve(json.data || json);
+                            } else {
+                                resolve(null);
+                            }
+                        } catch (e) {
+                            resolve(null);
+                        }
+                    },
+                    onerror: () => resolve(null)
+                });
+            });
+        },
+
+        triggerClubSync: async function () {
+            let token = CONFIG.futggToken;
+            if (!token) {
+                return { success: false, error: "Token de FUT.GG no configurado." };
+            }
+
+            return new Promise((resolve) => {
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: 'https://www.fut.gg/api/gg-club/sync/',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    data: JSON.stringify({}),
+                    withCredentials: true,
+                    onload: function (res) {
+                        try {
+                            const json = JSON.parse(res.responseText || '{}');
+                            if (res.status >= 200 && res.status < 300) {
+                                if (json.data && json.data.status === 'queue_full') {
+                                    const waitSec = json.data.estimatedWaitSeconds || 60;
+                                    resolve({ success: false, queueFull: true, waitMinutes: Math.max(1, Math.round(waitSec / 60)) });
+                                } else {
+                                    resolve({ success: true, data: json.data || json });
+                                }
+                            } else {
+                                const msg = (json && (json.detail || json.message || json.error)) || `HTTP ${res.status}`;
+                                resolve({ success: false, error: msg, status: res.status });
+                            }
+                        } catch (e) {
+                            if (res.status >= 200 && res.status < 300) {
+                                resolve({ success: true });
+                            } else {
+                                resolve({ success: false, error: `HTTP ${res.status}` });
+                            }
+                        }
+                    },
+                    onerror: function (err) {
+                        resolve({ success: false, error: err.message || "Error de red al conectar con FUT.GG" });
                     }
                 });
             });
@@ -1947,19 +2061,136 @@
         }
     }
 
+    // =========================================================================
+    // DETECCIÓN DE APERTURA DE SOBRES / COMPRA DE PACKS (AUTO-SYNC CLUB CON FUT.GG)
+    // =========================================================================
+    let packDebounceTimer = null;
+    function onPackEventDetected() {
+        if (packDebounceTimer) clearTimeout(packDebounceTimer);
+        packDebounceTimer = setTimeout(async () => {
+            console.log("%c[FUT.GG Helper] 🎁 Apertura de sobre o recepción de ítems detectada en EA Web App.", "color:#00ff88; font-weight:bold;");
+            
+            const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
+            const elapsed = Date.now() - lastClubSync;
+            const cooldown = CONFIG.clubSyncCooldownMs; // 30 min
+            
+            if (elapsed >= cooldown || lastClubSync === 0) {
+                notificar("🎁 ¡Sobre abierto detectado! Sincronizando tu club en FUT.GG...", "#00ff88");
+                try {
+                    const res = await FutGgClient.triggerClubSync();
+                    if (res.success) {
+                        GM_setValue('futgg_last_club_sync_timestamp', Date.now());
+                        GM_setValue('futgg_pending_sync_after_packs', false);
+                        notificar("☁️ Club enviado a FUT.GG. Re-escaneando gemas en 35s...", "#00ccff");
+                        setTimeout(() => loadGemsFromFutGg(true), 35000);
+                    } else if (res.queueFull) {
+                        notificar(`⏳ Cola de FUT.GG llena (~${res.waitMinutes}m). Reintentando en breve...`, "#ffaa00");
+                        GM_setValue('futgg_pending_sync_after_packs', true);
+                    } else {
+                        console.warn("[FUT.GG Helper] Respuesta de sync:", res.error);
+                    }
+                } catch (e) {
+                    console.warn("[FUT.GG Helper] Fallo al auto-sincronizar tras sobre:", e);
+                }
+            } else {
+                const remaining = Math.ceil((cooldown - elapsed) / 60000);
+                GM_setValue('futgg_pending_sync_after_packs', true);
+                notificar(`🎁 ¡Sobre abierto! Sincronización en FUT.GG programada al finalizar cooldown (${remaining}m restantes).`, "#00ccff");
+            }
+        }, 3000);
+    }
+
+    function setupPackOpeningListener() {
+        const win = getAppWindow();
+        if (!win) return;
+
+        function checkUrl(url) {
+            if (!url || typeof url !== 'string') return;
+            const u = url.toLowerCase();
+            if (u.includes('/purchased/items') || u.includes('/pack/buy') || u.includes('/pack/open') || u.includes('/pack/receive') || u.includes('/user/store')) {
+                onPackEventDetected();
+            }
+        }
+
+        try {
+            const origXhrOpen = win.XMLHttpRequest && win.XMLHttpRequest.prototype.open;
+            const origXhrSend = win.XMLHttpRequest && win.XMLHttpRequest.prototype.send;
+            if (origXhrOpen && origXhrSend) {
+                win.XMLHttpRequest.prototype.open = function (method, url) {
+                    this._eaEndpointUrl = url;
+                    return origXhrOpen.apply(this, arguments);
+                };
+                win.XMLHttpRequest.prototype.send = function () {
+                    this.addEventListener('load', function () {
+                        try {
+                            if (this._eaEndpointUrl && (this.status === 200 || this.status === 201)) {
+                                checkUrl(this._eaEndpointUrl);
+                            }
+                        } catch (e) { }
+                    });
+                    return origXhrSend.apply(this, arguments);
+                };
+            }
+
+            if (win.fetch) {
+                const origFetch = win.fetch;
+                win.fetch = function (...args) {
+                    const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
+                    return origFetch.apply(this, args).then(res => {
+                        try {
+                            if (res && res.ok && url) checkUrl(url);
+                        } catch (e) { }
+                        return res;
+                    });
+                };
+            }
+        } catch (e) {
+            console.warn("[FUT.GG Helper] No se pudo inicializar interceptor de sobres:", e);
+        }
+    }
+
+    async function onManualClubSyncClick() {
+        const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
+        const elapsed = Date.now() - lastClubSync;
+        const cooldown = CONFIG.clubSyncCooldownMs;
+
+        if (elapsed < cooldown && lastClubSync !== 0) {
+            const remaining = Math.ceil((cooldown - elapsed) / 60000);
+            notificar(`⏳ FUT.GG solo permite sincronizar el club cada 30 min. Faltan ${remaining}m.`, "#ffaa00");
+            return;
+        }
+
+        notificar("☁️ Solicitando sincronización de club en servidores de FUT.GG...", "#00ccff");
+        try {
+            const res = await FutGgClient.triggerClubSync();
+            if (res.success) {
+                GM_setValue('futgg_last_club_sync_timestamp', Date.now());
+                GM_setValue('futgg_pending_sync_after_packs', false);
+                notificar("🟢 ¡Sincronización iniciada en FUT.GG! Recargando joyas en 35s...", "#00ff88");
+                setTimeout(() => loadGemsFromFutGg(true), 35000);
+            } else if (res.queueFull) {
+                notificar(`⏳ La cola de sincronización de FUT.GG está llena (~${res.waitMinutes}m).`, "#ffaa00");
+            } else {
+                notificar(`⚠️ FUT.GG respondió: ${res.error || 'No se pudo iniciar el sync'}`, "#ffaa00");
+            }
+        } catch (e) {
+            notificar(`Error al conectar con FUT.GG: ${e.message}`, "#ff4444");
+        }
+    }
+
     function updateSyncTimerDisplay() {
         const label = document.getElementById('futgg-sync-timer-label');
         if (!label) return;
         if (!State.nextSyncTimestamp) {
-            label.textContent = '⏱️ Auto-sync: cada 30m';
+            label.textContent = '⏱️ Auto-check: cada 15m';
             return;
         }
         const diffMs = State.nextSyncTimestamp - Date.now();
         if (diffMs <= 0) {
-            label.textContent = '⏱️ Sincronizando...';
+            label.textContent = '⏱️ Comprobando gemas...';
         } else {
             const mins = Math.ceil(diffMs / 60000);
-            label.textContent = `⏱️ Auto-sync: prox. en ${mins}m`;
+            label.textContent = `⏱️ Auto-check: prox. en ${mins}m`;
         }
     }
 
@@ -1967,14 +2198,30 @@
         if (State.autoSyncTimer) clearTimeout(State.autoSyncTimer);
         State.nextSyncTimestamp = Date.now() + delayMs;
         updateSyncTimerDisplay();
-        console.log(`[FUT.GG Helper] ⏱️ Próxima auto-sincronización en ${Math.round(delayMs / 60000)} minutos.`);
+        console.log(`[FUT.GG Helper] ⏱️ Próxima auto-comprobación de gemas en ${Math.round(delayMs / 60000)} minutos.`);
         State.autoSyncTimer = setTimeout(async () => {
-            console.log("[FUT.GG Helper] 🔄 Ejecutando auto-sincronización de 30 minutos con FUT.GG...");
+            console.log("[FUT.GG Helper] 🔄 Ejecutando comprobación periódica de gemas con FUT.GG...");
             if (State.isBatchRunning) {
                 console.log("[FUT.GG Helper] ⏳ Batch en curso, posponiendo auto-sync 1 minuto...");
                 scheduleNextAutoSync(60000);
                 return;
             }
+
+            // Si había una sincronización de club pendiente tras abrir packs y ya pasaron los 30 min de cooldown
+            const isPendingPackSync = GM_getValue('futgg_pending_sync_after_packs', false);
+            const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
+            if (isPendingPackSync && (Date.now() - lastClubSync >= CONFIG.clubSyncCooldownMs)) {
+                try {
+                    console.log("[FUT.GG Helper] 🎁 Ejecutando sync pendiente de club en FUT.GG tras packs...");
+                    const res = await FutGgClient.triggerClubSync();
+                    if (res && res.success) {
+                        GM_setValue('futgg_last_club_sync_timestamp', Date.now());
+                        GM_setValue('futgg_pending_sync_after_packs', false);
+                        notificar("☁️ Sincronización pendiente de club iniciada en FUT.GG.", "#00ff88");
+                    }
+                } catch (e) { }
+            }
+
             try {
                 await loadGemsFromFutGg(true /* isAuto */);
             } catch (e) {
@@ -2127,7 +2374,8 @@
             </div>
             <div class="futgg-toolbar">
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <button class="futgg-btn primary" id="futgg-refresh-btn" title="Sincronizar ahora con FUT.GG (Auto-sincroniza cada 30 min)">🔄 Cargar de FUT.GG</button>
+                    <button class="futgg-btn primary" id="futgg-refresh-btn" title="Comprobar si hay nuevas gemas en FUT.GG (Auto-check cada 15 min)">🔄 Cargar de FUT.GG</button>
+                    <button class="futgg-btn" id="futgg-sync-club-remote-btn" style="border-color:#ff5500; color:#ff7733;" title="Envía la orden a los servidores de FUT.GG para leer tu club de EA (Equivalente al botón 'Sync Club' de la web de FUT.GG)">☁️ Sync Club FUT.GG</button>
                     <button class="futgg-btn" id="futgg-scan-club-btn">🔍 Escanear Mi Club</button>
                     <button class="futgg-btn" id="futgg-batch-move-btn">📥 Mover Todas a Transferibles</button>
                     <button class="futgg-btn" id="futgg-batch-check-btn">📊 Comprobar Mercado (Todas las Páginas) [V]</button>
@@ -2174,7 +2422,7 @@
             <div class="futgg-footer">
                 <div style="display:flex; align-items:center; gap:12px;">
                     <span>🛡️ Modo Seguro Anti-Ban Activo (Delays 2.8s - 4.2s)</span>
-                    <span id="futgg-sync-timer-label" style="color:#00ff88; font-size:11px; font-weight:600;">⏱️ Auto-sync: 30m</span>
+                    <span id="futgg-sync-timer-label" style="color:#00ff88; font-size:11px; font-weight:600;">⏱️ Auto-check: 15m</span>
                 </div>
                 <div>
                     <span id="futgg-gems-count">0 joyas cargadas</span>
@@ -2189,6 +2437,7 @@
             scheduleNextAutoSync(CONFIG.autoSyncIntervalMs);
             loadGemsFromFutGg(false);
         };
+        document.getElementById('futgg-sync-club-remote-btn').onclick = onManualClubSyncClick;
         document.getElementById('futgg-scan-club-btn').onclick = () => scanClubForGems(false);
         document.getElementById('futgg-batch-move-btn').onclick = batchMoveAllToTransfer;
         document.getElementById('futgg-batch-check-btn').onclick = batchCheckAllMarketPrices;
@@ -2909,7 +3158,9 @@
         }
     });
 
-    // Inicializar UI cuando la página cargue
+    // Inicializar UI e interceptor de sobres cuando la página cargue
+    setupPackOpeningListener();
+
     window.addEventListener('load', () => {
         setTimeout(createUI, 2000);
     });
