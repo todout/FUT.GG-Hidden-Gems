@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.9.0
+// @version      1.9.1
 // @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: auto-sincronización cada 15 min, auto-sync de club en FUT.GG al abrir sobres o tras cooldown de 30m, alertas de gemas nuevas, conteo de gemas en club/transferibles, escaneo humano y auto-listado inteligente.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -1768,6 +1768,18 @@
             .futgg-table tr:hover td {
                 background: rgba(30, 44, 62, 0.5);
             }
+            /* Destacar cartas que se están vendiendo actualmente */
+            .futgg-table tr.row-selling {
+                background: linear-gradient(90deg, rgba(0, 255, 136, 0.12) 0%, rgba(13, 148, 136, 0.16) 100%) !important;
+                border-left: 4px solid #00ff88 !important;
+            }
+            .futgg-table tr.row-selling td {
+                border-top: 1px solid rgba(0, 255, 136, 0.35) !important;
+                border-bottom: 1px solid rgba(0, 255, 136, 0.35) !important;
+            }
+            .futgg-table tr.row-selling:hover td {
+                background: rgba(0, 255, 136, 0.18) !important;
+            }
 
             .futgg-player-cell {
                 display: flex;
@@ -2066,16 +2078,21 @@
     // =========================================================================
     let packDebounceTimer = null;
     function onPackEventDetected() {
+        const PACK_WAIT_MS = 10 * 60 * 1000; // Esperar 10 minutos tras el último sobre de la tanda
         if (packDebounceTimer) clearTimeout(packDebounceTimer);
+
+        console.log("%c[FUT.GG Helper] 🎁 Sobre detectado en EA Web App. Temporizador reiniciado a 10 min...", "color:#00ff88; font-weight:bold;");
+        notificar("🎁 Sobre abierto detectado. Se sincronizará con FUT.GG 10 min después de finalizar tu tanda de sobres.", "#00ccff");
+
         packDebounceTimer = setTimeout(async () => {
-            console.log("%c[FUT.GG Helper] 🎁 Apertura de sobre o recepción de ítems detectada en EA Web App.", "color:#00ff88; font-weight:bold;");
+            console.log("%c[FUT.GG Helper] 🎁 10 minutos sin abrir nuevos sobres. Verificando sincronización de club con FUT.GG...", "color:#00ff88; font-weight:bold;");
             
             const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
             const elapsed = Date.now() - lastClubSync;
             const cooldown = CONFIG.clubSyncCooldownMs; // 30 min
             
             if (elapsed >= cooldown || lastClubSync === 0) {
-                notificar("🎁 ¡Sobre abierto detectado! Sincronizando tu club en FUT.GG...", "#00ff88");
+                notificar("🎁 Tanda de sobres finalizada. Sincronizando tu club en FUT.GG...", "#00ff88");
                 try {
                     const res = await FutGgClient.triggerClubSync();
                     if (res.success) {
@@ -2095,9 +2112,9 @@
             } else {
                 const remaining = Math.ceil((cooldown - elapsed) / 60000);
                 GM_setValue('futgg_pending_sync_after_packs', true);
-                notificar(`🎁 ¡Sobre abierto! Sincronización en FUT.GG programada al finalizar cooldown (${remaining}m restantes).`, "#00ccff");
+                notificar(`🎁 Tanda de sobres finalizada. Sincronización en FUT.GG programada al finalizar cooldown (${remaining}m restantes).`, "#00ccff");
             }
-        }, 3000);
+        }, PACK_WAIT_MS);
     }
 
     function setupPackOpeningListener() {
@@ -2372,25 +2389,41 @@
                 <h2>💎 Joyas Ocultas de FUT.GG & Auto-Listador</h2>
                 <button class="futgg-close-btn" id="futgg-close-btn">&times;</button>
             </div>
-            <div class="futgg-toolbar">
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <button class="futgg-btn primary" id="futgg-refresh-btn" title="Comprobar si hay nuevas gemas en FUT.GG (Auto-check cada 15 min)">🔄 Cargar de FUT.GG</button>
-                    <button class="futgg-btn" id="futgg-sync-club-remote-btn" style="border-color:#ff5500; color:#ff7733;" title="Envía la orden a los servidores de FUT.GG para leer tu club de EA (Equivalente al botón 'Sync Club' de la web de FUT.GG)">☁️ Sync Club FUT.GG</button>
-                    <button class="futgg-btn" id="futgg-scan-club-btn">🔍 Escanear Mi Club</button>
-                    <button class="futgg-btn" id="futgg-batch-move-btn">📥 Mover Todas a Transferibles</button>
-                    <button class="futgg-btn" id="futgg-batch-check-btn">📊 Comprobar Mercado (Todas las Páginas) [V]</button>
-                    <button class="futgg-btn" id="futgg-batch-list-btn" style="border-color:#00ff88; color:#00ff88;">🚀 Listar Seleccionadas</button>
-                    <button class="futgg-btn" id="futgg-toggle-token-btn">⚙️ Token</button>
+            <div class="futgg-toolbar" style="display:flex; flex-direction:column; gap:8px; padding:10px 14px; background:#111a26; border-bottom:1px solid #1f2e42;">
+                <!-- Fila 1: Grupos de Acciones Principales -->
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <!-- Grupo Sincronización -->
+                    <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
+                        <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Sync:</span>
+                        <button class="futgg-btn primary" id="futgg-refresh-btn" style="padding:5px 10px; font-size:11px;" title="Descarga de FUT.GG las joyas ocultas actuales (Auto-check cada 15 min)">🔄 Cargar Joyas</button>
+                        <button class="futgg-btn" id="futgg-sync-club-remote-btn" style="padding:5px 10px; font-size:11px; border-color:#ff5500; color:#ff7733;" title="Envía la orden a FUT.GG para leer tu club de EA (Equivalente al botón Sync Club de su web)">☁️ Sync Club</button>
+                        <button class="futgg-btn" id="futgg-scan-club-btn" style="padding:5px 10px; font-size:11px;" title="Comprueba si las joyas están en tu inventario local (Club, Transferibles, Sin Asignar)">🔍 Escanear Club</button>
+                    </div>
+
+                    <!-- Grupo Acciones en Lote -->
+                    <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
+                        <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Acciones:</span>
+                        <button class="futgg-btn" id="futgg-batch-move-btn" style="padding:5px 10px; font-size:11px;" title="Mueve todas las joyas que tienes en el club a tu Lista de Transferibles">📥 Mover Todas</button>
+                        <button class="futgg-btn" id="futgg-batch-check-btn" style="padding:5px 10px; font-size:11px;" title="Revisa el precio de mercado de todas las cartas recorriendo todas las páginas (Tecla V)">📊 Chequear Mercado</button>
+                        <button class="futgg-btn" id="futgg-batch-list-btn" style="padding:5px 10px; font-size:11px; border-color:#00ff88; color:#00ff88; font-weight:700;" title="Pone a la venta en el mercado las cartas revisadas">🚀 Listar Todas</button>
+                    </div>
                 </div>
-                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                    <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#cbd5e1; cursor:pointer; background:#182230; border:1px solid #334458; padding:5px 10px; border-radius:6px; user-select:none;" title="Ocultar jugadores que ya no tienes en tu club o que ya fueron vendidos">
-                        <input type="checkbox" id="futgg-hide-sold-toggle" checked style="cursor:pointer; accent-color:#00ff88;" />
-                        <span>Ocultar vendidas / fuera de club (<b id="futgg-hidden-count" style="color:#00ff88;">0</b>)</span>
-                    </label>
-                </div>
-                <div id="futgg-batch-controls" style="display:none; align-items:center; gap:8px;">
-                    <span id="futgg-batch-status" style="font-size:12px; color:#ffaa00; font-weight:bold;">Procesando...</span>
-                    <button class="futgg-btn danger" id="futgg-cancel-batch-btn">Detener</button>
+
+                <!-- Fila 2: Filtros & Ajustes -->
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding-top:2px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <label style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; cursor:pointer; background:#162232; border:1px solid #23344a; padding:4px 10px; border-radius:6px; user-select:none;" title="Ocultar jugadores que ya no tienes en tu club o que ya fueron vendidos">
+                            <input type="checkbox" id="futgg-hide-sold-toggle" checked style="cursor:pointer; accent-color:#00ff88;" />
+                            <span>Ocultar vendidas / fuera de club (<b id="futgg-hidden-count" style="color:#00ff88;">0</b>)</span>
+                        </label>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <div id="futgg-batch-controls" style="display:none; align-items:center; gap:8px;">
+                            <span id="futgg-batch-status" style="font-size:11px; color:#ffaa00; font-weight:bold;">Procesando...</span>
+                            <button class="futgg-btn danger" id="futgg-cancel-batch-btn" style="padding:3px 8px; font-size:10px;">Detener</button>
+                        </div>
+                        <button class="futgg-btn" id="futgg-toggle-token-btn" style="padding:4px 10px; font-size:11px;" title="Configuración de Token JWT de FUT.GG">⚙️ Token</button>
+                    </div>
                 </div>
             </div>
             <div id="futgg-token-panel" style="display:none; flex-direction:column; gap:6px;">
@@ -2948,6 +2981,7 @@
                                 <div style="display:flex; gap:4px;">
                                     ${hasMore ? `<button class="futgg-btn" style="padding:1px 5px; font-size:9px;" data-action="load-next-page" data-eaid="${eaId}" title="Cargar siguientes 21 cartas">+ Pág ${(market.pageLoaded || 1) + 1}</button>` : ''}
                                     <button class="futgg-btn" style="padding:1px 5px; font-size:9px;" data-action="open-in-webapp" data-eaid="${eaId}" title="Abrir en pantalla completa de EA">👁️ EA</button>
+                                    <button class="futgg-btn" style="padding:1px 6px; font-size:9px; border-color:#ff5555; color:#ff7777;" data-action="toggle-breakdown" data-eaid="${eaId}" title="Comprimir lista">▲ Cerrar</button>
                                 </div>
                             </div>
                             ${market.hasOutlier ? `
@@ -2971,9 +3005,7 @@
                                     `;
                     }).join('')}
                             </div>
-                            <div style="font-size:9px; color:#64748b; margin-top:5px; text-align:center;">
-                                💡 Haz clic en cualquier precio para fijarlo como tu precio de venta
-                            </div>
+                            <button class="futgg-btn" style="width:100%; margin-top:6px; padding:4px 0; font-size:10px; justify-content:center; background:#182434; border:1px solid #33475f; color:#cbd5e1; cursor:pointer;" data-action="toggle-breakdown" data-eaid="${eaId}" title="Comprimir lista de precios">▲ Comprimir lista de precios</button>
                         </div>
                     `;
                 }
@@ -2992,8 +3024,8 @@
                             </div>
                             <button class="futgg-btn" style="padding:2px 6px; font-size:10px;" data-action="check-market" data-eaid="${eaId}" title="Actualizar">🔄</button>
                         </div>
-                        <button class="futgg-btn" style="padding:3px 8px; font-size:10px; align-self:flex-start; ${market.hasOutlier ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" data-action="toggle-breakdown" data-eaid="${eaId}">
-                            ${isBreakdownOpen ? '▲ Ocultar desglose' : `▼ Ver ${market.tiers.length} precios (${market.count}${hasMore ? '+' : ''})`}
+                        <button class="futgg-btn" style="padding:3px 8px; font-size:10px; align-self:flex-start; ${isBreakdownOpen ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" data-action="toggle-breakdown" data-eaid="${eaId}">
+                            ${isBreakdownOpen ? '▲ Comprimir lista de precios' : `▼ Ver ${market.tiers.length} precios (${market.count}${hasMore ? '+' : ''})`}
                         </button>
                         ${breakdownHtml}
                     </div>
@@ -3068,14 +3100,16 @@
                 `;
             }
 
+            const rowClass = selling ? 'row-selling' : (sold ? 'row-sold' : '');
             html += `
-                <tr>
+                <tr class="${rowClass}">
                     <td>
                         <div class="futgg-player-cell">
                             <span class="futgg-rating">${gem.rating || '---'}</span>
                             <div>
                                 <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:6px;">
                                     <span>${gem.name}</span>
+                                    ${selling ? '<span class="futgg-tag selling" style="background:rgba(0,255,136,0.25); color:#00ff88; border:1px solid #00ff88; font-size:10px; font-weight:800; padding:1px 5px;">🚀 EN VENTA</span>' : ''}
                                     ${State.newGemIds && State.newGemIds.has(eaId) ? '<span class="futgg-new-badge">✨ NUEVA</span>' : ''}
                                 </div>
                                 <div style="font-size:11px; color:#8fa0b5;">${gem.club || 'Club'} (ID: ${eaId})</div>

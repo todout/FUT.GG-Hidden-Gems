@@ -118,3 +118,14 @@ Un script de terminal para inspeccionar tus joyas o forzar la sincronización si
    - Se redujo el intervalo de consulta de gemas de 30 a **15 minutos**. 1 sola petición GET cada 15 minutos es totalmente segura, indetectable y sin riesgo alguno de ban de IP.
 4. **Notificaciones de Token Optimizadas en FUT.GG**:
    - El toast verde de sincronización de token se muestra únicamente una vez por sesión al entrar a FUT.GG; las renovaciones y lecturas posteriores operan 100% en silencio en segundo plano.
+
+## 🚀 Novedades v1.9.1
+1. **Espera Inteligente de 10 Minutos tras Tanda de Sobres**:
+   - Si abres una tanda de sobres consecutivos, el script espera 10 minutos completos después de tu último sobre antes de lanzar la sincronización con FUT.GG, asegurando que todas las cartas de la sesión queden contempladas.
+2. **Barra de Herramientas Rediseñada en 2 Filas**:
+   - Botones organizados por grupos funcionales: **Sync** (`🔄 Cargar Joyas`, `☁️ Sync Club`, `🔍 Escanear Club`) y **Acciones en Lote** (`📥 Mover Todas`, `📊 Chequear Mercado`, `🚀 Listar Todas`).
+   - Evita envolturas desordenadas de 3 líneas y optimiza el espacio horizontal.
+3. **Comprimir Desglose de Precios a Demanda**:
+   - Nuevos botones `[▲ Comprimir lista de precios]` y `[▲ Cerrar]` para colapsar verticalmente la lista detallada de tiers si decides no listar una carta.
+4. **Diferenciación Visual de Cartas en Venta**:
+   - Las cartas que ya están listadas en el mercado (`🚀 VENDIÉNDOSE`) ahora lucen un fondo verde esmeralda distintivo, borde iluminado y etiqueta especial para diferenciarse al instante de las cartas pendientes de listar.
