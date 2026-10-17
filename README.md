@@ -137,3 +137,12 @@ Un script de terminal para inspeccionar tus joyas o forzar la sincronización si
 2. **Botón de Actualizar Mercado Agrandado y Columna Compacta**:
    - El botón de recarga `[🔄]` en la columna de Mercado en Vivo ahora es más grande y fácil de presionar.
    - El botón de alternar desglose (`[▼ Ver N]` / `[▲ Comprimir]`) se ubicó verticalmente debajo del botón `[🔄]`, compartiendo la misma fila horizontal que los datos de precio mínimo y evitando que la fila de la tabla aumente de altura innecesariamente.
+
+## 🚀 Novedades v1.9.3
+1. **Botón `[☁️ Sync Club]` con Cooldown Dinámico y Bloqueo**:
+   - El botón ahora se deshabilita automáticamente mientras esté en curso el tiempo de espera oficial de 30 minutos de FUT.GG, impidiendo clics accidentales o innecesarios.
+   - Al pasar el cursor por encima (`hover`), muestra un tooltip en tiempo real con los minutos exactos restantes antes de poder volver a sincronizar.
+   - Al finalizar el cooldown, el botón se habilita de forma automática y cambia su mensaje a disponible sin requerir recargar la página.
+2. **Auto-Sincronización Silenciosa en Segundo Plano**:
+   - Se eliminaron todas las notificaciones toast invasivas al adquirir cartas en el mercado o abrir sobres (`"Sobre detectado..."`).
+   - La comprobación y sincronización de club tras compras o sobres opera 100% en segundo plano de manera transparente.

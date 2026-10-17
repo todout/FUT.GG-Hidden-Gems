@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.9.2
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: barra de acciones en 1 sola línea, controles compactos en cabecera, tabla con desglose colapsable bajo botón de actualizar, auto-sincronización cada 15 min y auto-sync tras sobres.
+// @version      1.9.3
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: botón Sync Club con cooldown dinámico y tooltip, auto-sync en segundo plano sin notificaciones invasivas, barra en 1 línea y tabla ultra compacta.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1727,7 +1727,8 @@
                 color: #fff;
                 border-color: #ff4444;
             }
-            .futgg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            .futgg-btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: auto !important; }
+            .futgg-btn:disabled:hover { background: #1f2c3d !important; border-color: #35475e !important; }
 
             #futgg-token-panel {
                 padding: 12px 20px;
@@ -2082,27 +2083,27 @@
         const PACK_WAIT_MS = 10 * 60 * 1000; // Esperar 10 minutos tras el último sobre de la tanda
         if (packDebounceTimer) clearTimeout(packDebounceTimer);
 
-        console.log("%c[FUT.GG Helper] 🎁 Sobre detectado en EA Web App. Temporizador reiniciado a 10 min...", "color:#00ff88; font-weight:bold;");
-        notificar("🎁 Sobre abierto detectado. Se sincronizará con FUT.GG 10 min después de finalizar tu tanda de sobres.", "#00ccff");
+        console.log("%c[FUT.GG Helper] 🎁 Sobre o adquisición detectada. Auto-sync con FUT.GG programado en segundo plano en 10 min...", "color:#00ff88; font-weight:bold;");
 
         packDebounceTimer = setTimeout(async () => {
-            console.log("%c[FUT.GG Helper] 🎁 10 minutos sin abrir nuevos sobres. Verificando sincronización de club con FUT.GG...", "color:#00ff88; font-weight:bold;");
+            console.log("%c[FUT.GG Helper] 🎁 10 minutos transcurridos sin nuevos sobres/adquisiciones. Verificando sincronización de club con FUT.GG en segundo plano...", "color:#00ff88; font-weight:bold;");
             
             const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
             const elapsed = Date.now() - lastClubSync;
             const cooldown = CONFIG.clubSyncCooldownMs; // 30 min
             
             if (elapsed >= cooldown || lastClubSync === 0) {
-                notificar("🎁 Tanda de sobres finalizada. Sincronizando tu club en FUT.GG...", "#00ff88");
+                console.log("[FUT.GG Helper] ☁️ Sincronizando tu club con FUT.GG en segundo plano...");
                 try {
                     const res = await FutGgClient.triggerClubSync();
                     if (res.success) {
                         GM_setValue('futgg_last_club_sync_timestamp', Date.now());
                         GM_setValue('futgg_pending_sync_after_packs', false);
-                        notificar("☁️ Club enviado a FUT.GG. Re-escaneando gemas en 35s...", "#00ccff");
+                        updateClubSyncButtonState();
+                        console.log("[FUT.GG Helper] ☁️ Club enviado a FUT.GG en segundo plano. Recargando joyas en 35s...");
                         setTimeout(() => loadGemsFromFutGg(true), 35000);
                     } else if (res.queueFull) {
-                        notificar(`⏳ Cola de FUT.GG llena (~${res.waitMinutes}m). Reintentando en breve...`, "#ffaa00");
+                        console.log(`[FUT.GG Helper] ⏳ Cola de FUT.GG llena (~${res.waitMinutes}m). Reintentando en segundo plano...`);
                         GM_setValue('futgg_pending_sync_after_packs', true);
                     } else {
                         console.warn("[FUT.GG Helper] Respuesta de sync:", res.error);
@@ -2113,7 +2114,7 @@
             } else {
                 const remaining = Math.ceil((cooldown - elapsed) / 60000);
                 GM_setValue('futgg_pending_sync_after_packs', true);
-                notificar(`🎁 Tanda de sobres finalizada. Sincronización en FUT.GG programada al finalizar cooldown (${remaining}m restantes).`, "#00ccff");
+                console.log(`[FUT.GG Helper] 🎁 Auto-sync en segundo plano programado para cuando termine el cooldown (${remaining}m restantes).`);
             }
         }, PACK_WAIT_MS);
     }
@@ -2167,14 +2168,35 @@
         }
     }
 
+    function updateClubSyncButtonState() {
+        const btn = document.getElementById('futgg-sync-club-remote-btn');
+        if (!btn) return;
+
+        const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
+        const elapsed = Date.now() - lastClubSync;
+        const cooldown = CONFIG.clubSyncCooldownMs; // 30 min
+
+        if (lastClubSync > 0 && elapsed < cooldown) {
+            const remainingMins = Math.ceil((cooldown - elapsed) / 60000);
+            btn.disabled = true;
+            btn.style.opacity = '0.45';
+            btn.style.cursor = 'not-allowed';
+            btn.title = `⏳ Faltan ${remainingMins} min para poder sincronizar el club en FUT.GG (cooldown oficial de 30 min)`;
+        } else {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+            btn.title = '☁️ Sincronizar tu club con FUT.GG ahora (Disponible)';
+        }
+    }
+
     async function onManualClubSyncClick() {
         const lastClubSync = Number(GM_getValue('futgg_last_club_sync_timestamp', 0));
         const elapsed = Date.now() - lastClubSync;
         const cooldown = CONFIG.clubSyncCooldownMs;
 
         if (elapsed < cooldown && lastClubSync !== 0) {
-            const remaining = Math.ceil((cooldown - elapsed) / 60000);
-            notificar(`⏳ FUT.GG solo permite sincronizar el club cada 30 min. Faltan ${remaining}m.`, "#ffaa00");
+            updateClubSyncButtonState();
             return;
         }
 
@@ -2184,6 +2206,7 @@
             if (res.success) {
                 GM_setValue('futgg_last_club_sync_timestamp', Date.now());
                 GM_setValue('futgg_pending_sync_after_packs', false);
+                updateClubSyncButtonState();
                 notificar("🟢 ¡Sincronización iniciada en FUT.GG! Recargando joyas en 35s...", "#00ff88");
                 setTimeout(() => loadGemsFromFutGg(true), 35000);
             } else if (res.queueFull) {
@@ -2197,6 +2220,7 @@
     }
 
     function updateSyncTimerDisplay() {
+        updateClubSyncButtonState();
         const label = document.getElementById('futgg-sync-timer-label');
         if (!label) return;
         if (!State.nextSyncTimestamp) {
@@ -2235,7 +2259,7 @@
                     if (res && res.success) {
                         GM_setValue('futgg_last_club_sync_timestamp', Date.now());
                         GM_setValue('futgg_pending_sync_after_packs', false);
-                        notificar("☁️ Sincronización pendiente de club iniciada en FUT.GG.", "#00ff88");
+                        updateClubSyncButtonState();
                     }
                 } catch (e) { }
             }
@@ -2464,7 +2488,11 @@
             scheduleNextAutoSync(CONFIG.autoSyncIntervalMs);
             loadGemsFromFutGg(false);
         };
-        document.getElementById('futgg-sync-club-remote-btn').onclick = onManualClubSyncClick;
+        const syncClubRemoteBtn = document.getElementById('futgg-sync-club-remote-btn');
+        if (syncClubRemoteBtn) {
+            syncClubRemoteBtn.onclick = onManualClubSyncClick;
+            syncClubRemoteBtn.onmouseenter = updateClubSyncButtonState;
+        }
         document.getElementById('futgg-scan-club-btn').onclick = () => scanClubForGems(false);
         document.getElementById('futgg-batch-move-btn').onclick = batchMoveAllToTransfer;
         document.getElementById('futgg-batch-check-btn').onclick = batchCheckAllMarketPrices;
@@ -2477,6 +2505,7 @@
         document.getElementById('futgg-open-futgg-btn').onclick = () => window.open('https://www.fut.gg/gg-club/hidden-gems/', '_blank');
 
         initAutoSync();
+        updateClubSyncButtonState();
 
         const hideToggle = document.getElementById('futgg-hide-sold-toggle');
         if (hideToggle) {
@@ -2678,6 +2707,7 @@
         State.isOpen = !State.isOpen;
         if (State.isOpen) {
             panel.classList.remove('hidden');
+            updateClubSyncButtonState();
             const floatingBtn = document.getElementById('futgg-floating-btn');
             if (floatingBtn) floatingBtn.classList.remove('has-new');
             if (State.gems.length === 0) {
