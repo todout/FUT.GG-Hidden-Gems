@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FUT.GG Hidden Gems Helper | EA FC 27 Web App</title>
+    <meta name="description" content="Sincroniza tus Hidden Gems de FUT.GG directamente en la Web App de EA Sports FC 27. Auto-escaneo de mercado, detección de snipes y listado inteligente a 1 clic.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="https://assets.fut.gg/frontend/site-images/site/favicon.png">
+    <style>
+        :root {
+            --fut-bg: #0b0e14;
+            --fut-surface: #101624;
+            --fut-card: #151d30;
+            --fut-card-hover: #1b253d;
+            --fut-border: #222e46;
+            --fut-border-light: rgba(255, 255, 255, 0.08);
+            --fut-orange: #ff5400;
+            --fut-orange-hover: #ff6e26;
+            --fut-mint: #0df2c9;
+            --fut-mint-dark: #00c9a7;
+            --fut-blue: #3b82f6;
+            --fut-purple: #8b5cf6;
+            --fut-gold: #f59e0b;
+            --text-white: #ffffff;
+            --text-gray-100: #e2e8f0;
+            --text-gray-300: #94a3b8;
+            --text-gray-400: #64748b;
+            --radius-xl: 18px;
+            --radius-lg: 12px;
+            --radius-md: 8px;
+            --radius-sm: 6px;
+            --transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Red Hat Display', sans-serif;
+            background-color: var(--fut-bg);
+            color: var(--text-white);
+            line-height: 1.55;
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 10%, rgba(255, 84, 0, 0.06) 0%, transparent 40%),
+                radial-gradient(circle at 90% 25%, rgba(13, 242, 201, 0.05) 0%, transparent 45%),
+                radial-gradient(circle at 50% 90%, rgba(59, 130, 246, 0.04) 0%, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        .container {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Top Bar / Navbar (FUT.GG Exact Style) */
+        header {
+            background: #0d121c;
+            border-bottom: 1px solid var(--fut-border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .navbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 64px;
+        }
+
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: #fff;
+        }
+
+        .logo-box {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 1.45rem;
+            font-weight: 900;
+            letter-spacing: -0.04em;
+        }
+
+        .logo-box .fut {
+            color: #fff;
+        }
+
+        .logo-box .dot-gg {
+            color: var(--fut-orange);
+        }
+
+        .logo-badge {
+            background: var(--fut-orange);
+            color: #fff;
+            font-size: 0.65rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            padding: 2px 7px;
+            border-radius: var(--radius-sm);
+            letter-spacing: 0.06em;
+        }
+
+        .badge-gems {
+            background: rgba(13, 242, 201, 0.12);
+            color: var(--fut-mint);
+            border: 1px solid rgba(13, 242, 201, 0.3);
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .nav-link {
+            color: var(--text-gray-300);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: var(--transition);
+        }
+
+        .nav-link:hover {
+            color: var(--fut-orange);
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: var(--radius-md);
+            font-size: 0.92rem;
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
+            transition: var(--transition);
+            border: none;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .btn-orange {
+            background: var(--fut-orange);
+            color: #ffffff;
+            box-shadow: 0 4px 16px rgba(255, 84, 0, 0.3);
+        }
+
+        .btn-orange:hover {
+            background: var(--fut-orange-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 22px rgba(255, 84, 0, 0.45);
+        }
+
+        .btn-mint {
+            background: var(--fut-mint);
+            color: #0b1219;
+            box-shadow: 0 4px 16px rgba(13, 242, 201, 0.25);
+        }
+
+        .btn-mint:hover {
+            background: #34f5d3;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 22px rgba(13, 242, 201, 0.4);
+        }
+
+        .btn-surface {
+            background: var(--fut-surface);
+            color: var(--text-white);
+            border: 1px solid var(--fut-border);
+        }
+
+        .btn-surface:hover {
+            background: var(--fut-card);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        /* Hero Banner */
+        .hero {
+            padding: 60px 0 40px;
+            text-align: center;
+        }
+
+        .hero-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: rgba(255, 84, 0, 0.1);
+            border: 1px solid rgba(255, 84, 0, 0.25);
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--fut-orange);
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .hero-title {
+            font-size: clamp(2.2rem, 5vw, 3.6rem);
+            font-weight: 900;
+            letter-spacing: -0.03em;
+            line-height: 1.15;
+            margin-bottom: 16px;
+        }
+
+        .hero-title .highlight-orange {
+            color: var(--fut-orange);
+        }
+
+        .hero-title .highlight-mint {
+            color: var(--fut-mint);
+        }
+
+        .hero-desc {
+            font-size: 1.15rem;
+            color: var(--text-gray-300);
+            max-width: 680px;
+            margin: 0 auto 32px;
+            font-weight: 400;
+        }
+
+        .hero-cta {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 14px;
+            margin-bottom: 36px;
+        }
+
+        /* Fast Stats Bar */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            background: var(--fut-surface);
+            border: 1px solid var(--fut-border);
+            border-radius: var(--radius-lg);
+            padding: 18px 24px;
+            margin-bottom: 60px;
+        }
+
+        .stat-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: #fff;
+            font-family: 'Red Hat Display', sans-serif;
+        }
+
+        .stat-value.mint { color: var(--fut-mint); }
+        .stat-value.orange { color: var(--fut-orange); }
+
+        .stat-desc {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text-gray-400);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-top: 2px;
+        }
+
+        /* Step by Step Section */
+        .section-header {
+            margin-bottom: 36px;
+            text-align: left;
+        }
+
+        .section-tag {
+            color: var(--fut-orange);
+            font-size: 0.78rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .section-title {
+            font-size: 1.85rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .steps-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 20px;
+            margin-bottom: 60px;
+        }
+
+        .step-item {
+            background: var(--fut-card);
+            border: 1px solid var(--fut-border);
+            border-radius: var(--radius-lg);
+            padding: 26px 22px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            transition: var(--transition);
+        }
+
+        .step-item:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.2);
+            background: var(--fut-card-hover);
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .step-index {
+            width: 36px;
+            height: 36px;
+            background: #0f1624;
+            border: 1px solid var(--fut-border);
+            color: var(--fut-orange);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 1rem;
+        }
+
+        .step-icon {
+            font-size: 1.4rem;
+        }
+
+        .step-title {
+            font-size: 1.15rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+        }
+
+        .step-text {
+            font-size: 0.9rem;
+            color: var(--text-gray-300);
+            line-height: 1.5;
+            margin-bottom: 20px;
+            flex-grow: 1;
+        }
+
+        .step-footer {
+            margin-top: auto;
+        }
+
+        .store-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .store-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 5px 10px;
+            border-radius: var(--radius-sm);
+            background: #0d131f;
+            color: var(--text-gray-300);
+            text-decoration: none;
+            border: 1px solid var(--fut-border);
+            transition: var(--transition);
+        }
+
+        .store-badge:hover {
+            background: var(--fut-border);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Keyboard Banner */
+        .shortcut-card {
+            background: linear-gradient(135deg, #131c2e, #101625);
+            border: 1px solid var(--fut-border);
+            border-radius: var(--radius-lg);
+            padding: 24px 28px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 60px;
+        }
+
+        .shortcut-text h4 {
+            font-size: 1.15rem;
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+
+        .shortcut-text p {
+            color: var(--text-gray-300);
+            font-size: 0.9rem;
+        }
+
+        .keys-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .kbd {
+            background: #0d131f;
+            border: 2px solid #283750;
+            border-radius: var(--radius-sm);
+            color: var(--fut-mint);
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 800;
+            font-size: 1.1rem;
+            padding: 6px 14px;
+            box-shadow: 0 3px 0 #080c14;
+        }
+
+        .kbd-plus {
+            color: var(--text-gray-400);
+            font-weight: 800;
+            font-size: 1.2rem;
+        }
+
+        /* Features Cards Grid */
+        .features-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 60px;
+        }
+
+        .feat-box {
+            background: var(--fut-card);
+            border: 1px solid var(--fut-border);
+            border-radius: var(--radius-lg);
+            padding: 28px 24px;
+            transition: var(--transition);
+        }
+
+        .feat-box:hover {
+            transform: translateY(-3px);
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+
+        .feat-tag {
+            font-size: 0.72rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: var(--radius-sm);
+            display: inline-block;
+            margin-bottom: 14px;
+            letter-spacing: 0.05em;
+        }
+
+        .tag-orange { background: rgba(255, 84, 0, 0.12); color: var(--fut-orange); border: 1px solid rgba(255, 84, 0, 0.25); }
+        .tag-mint { background: rgba(13, 242, 201, 0.12); color: var(--fut-mint); border: 1px solid rgba(13, 242, 201, 0.25); }
+        .tag-blue { background: rgba(59, 130, 246, 0.12); color: var(--fut-blue); border: 1px solid rgba(59, 130, 246, 0.25); }
+
+        .feat-title {
+            font-size: 1.2rem;
+            font-weight: 800;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .feat-desc {
+            font-size: 0.92rem;
+            color: var(--text-gray-300);
+            line-height: 1.55;
+        }
+
+        /* FAQ Accordion */
+        .faq-wrap {
+            max-width: 860px;
+            margin: 0 auto 70px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .faq-block {
+            background: var(--fut-card);
+            border: 1px solid var(--fut-border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .faq-header {
+            padding: 18px 22px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: none;
+        }
+
+        .faq-header:hover {
+            color: var(--fut-orange);
+        }
+
+        .faq-cross {
+            font-size: 1.2rem;
+            transition: transform 0.25s ease;
+            color: var(--text-gray-400);
+        }
+
+        .faq-block.open .faq-cross {
+            transform: rotate(45deg);
+            color: var(--fut-orange);
+        }
+
+        .faq-body {
+            padding: 0 22px 18px;
+            font-size: 0.92rem;
+            color: var(--text-gray-300);
+            line-height: 1.6;
+            display: none;
+        }
+
+        .faq-block.open .faq-body {
+            display: block;
+        }
+
+        /* Toast feedback */
+        #toast-alert {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #141f32;
+            color: #fff;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            border-left: 4px solid var(--fut-mint);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 0.92rem;
+            z-index: 99999;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: var(--transition);
+            pointer-events: none;
+        }
+
+        #toast-alert.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        /* Footer */
+        footer {
+            background: #090c12;
+            border-top: 1px solid var(--fut-border);
+            padding: 36px 0;
+            text-align: center;
+            font-size: 0.88rem;
+            color: var(--text-gray-400);
+        }
+
+        footer a {
+            color: var(--fut-orange);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .navbar .nav-links { display: none; }
+            .hero-title { font-size: 2.1rem; }
+            .shortcut-card { text-align: center; justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header / Navbar estilo FUT.GG -->
+    <header>
+        <div class="container navbar">
+            <a href="#" class="brand-logo">
+                <div class="logo-box">
+                    <span class="fut">FUT</span><span class="dot-gg">.GG</span>
+                </div>
+                <span class="logo-badge">HELPER</span>
+                <span class="badge-gems">💎 Hidden Gems</span>
+            </a>
+
+            <nav class="nav-links">
+                <a href="#pasos" class="nav-link">Instalación</a>
+                <a href="#funciones" class="nav-link">Funciones</a>
+                <a href="#faq" class="nav-link">Preguntas</a>
+                <a href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener" class="nav-link">GitHub</a>
+            </nav>
+
+            <div style="display:flex; gap:10px;">
+                <button id="btn-copy-top" class="btn btn-surface" onclick="copyCode()">
+                    📋 Copiar
+                </button>
+                <a id="btn-install-top" href="fc27_futgg_gems_helper.user.js" class="btn btn-orange">
+                    ⚡ Instalar v1.8.1
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="container">
+
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="hero-pill">
+                <span>🔥</span> EA SPORTS FC 27 • GG CLUB AUTOMATION
+            </div>
+
+            <h1 class="hero-title">
+                Tus <span class="highlight-mint">Hidden Gems</span> de FUT.GG,<br>
+                listas para vender en la <span class="highlight-orange">Web App</span>
+            </h1>
+
+            <p class="hero-desc">
+                Automatiza el flujo completo: escanea todas las páginas del mercado a ritmo humano, detecta cartas snipadas o errores de precio y lista todas tus joyas con 1 solo clic.
+            </p>
+
+            <div class="hero-cta">
+                <a id="btn-install-hero" href="fc27_futgg_gems_helper.user.js" class="btn btn-orange" style="padding: 14px 28px; font-size: 1rem;">
+                    🚀 Instalar Script en Tampermonkey
+                </a>
+                <button id="btn-copy-hero" class="btn btn-surface" style="padding: 14px 22px;" onclick="copyCode()">
+                    📋 Copiar Código del Script
+                </button>
+                <a id="btn-github-hero" href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener" class="btn btn-surface" style="padding: 14px 22px;">
+                    🐙 Repositorio GitHub
+                </a>
+            </div>
+        </section>
+
+        <!-- Fast Stats Banner -->
+        <div class="stats-bar">
+            <div class="stat-box">
+                <span class="stat-value mint">30 Minutos</span>
+                <span class="stat-desc">Sincronización Automática</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-value orange">3.0s - 4.5s</span>
+                <span class="stat-desc">Ritmo Humano Anti-Ban</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-value">Alt + G</span>
+                <span class="stat-desc">Atajo en la Web App</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-value mint">1 Clic</span>
+                <span class="stat-desc">Mover y Listar Todo</span>
+            </div>
+        </div>
+
+        <!-- 4 Steps Section -->
+        <section id="pasos">
+            <div class="section-header">
+                <span class="section-tag">Inicio Rápido</span>
+                <h2 class="section-title">Instalación en 4 Pasos Simples</h2>
+            </div>
+
+            <div class="steps-container">
+                <!-- Paso 1 -->
+                <div class="step-item">
+                    <div class="step-header">
+                        <span class="step-index">01</span>
+                        <span class="step-icon">🧩</span>
+                    </div>
+                    <h3 class="step-title">Instala Tampermonkey</h3>
+                    <p class="step-text">
+                        Tampermonkey es la extensión oficial y gratuita que ejecuta scripts seguros en tu navegador.
+                    </p>
+                    <div class="step-footer">
+                        <div class="store-links">
+                            <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" rel="noopener" class="store-badge">Chrome / Brave</a>
+                            <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener" class="store-badge">Edge</a>
+                            <a href="https://addons.mozilla.org/es/firefox/addon/tampermonkey/" target="_blank" rel="noopener" class="store-badge">Firefox</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Paso 2 -->
+                <div class="step-item">
+                    <div class="step-header">
+                        <span class="step-index">02</span>
+                        <span class="step-icon">⚡</span>
+                    </div>
+                    <h3 class="step-title">Instala el Script</h3>
+                    <p class="step-text">
+                        Haz clic en el botón de abajo. Tampermonkey detectará el archivo y te mostrará la pantalla de instalación con 1 clic.
+                    </p>
+                    <div class="step-footer">
+                        <a href="fc27_futgg_gems_helper.user.js" class="btn btn-orange" style="width: 100%;">
+                            📥 Instalar en 1 Clic
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Paso 3 -->
+                <div class="step-item">
+                    <div class="step-header">
+                        <span class="step-index">03</span>
+                        <span class="step-icon">🔄</span>
+                    </div>
+                    <h3 class="step-title">Abre FUT.GG</h3>
+                    <p class="step-text">
+                        Abre una pestaña en <a href="https://www.fut.gg/gg-club/hidden-gems/" target="_blank" rel="noopener" style="color:var(--fut-mint); font-weight:700;">fut.gg</a> con tu cuenta iniciada. Verás un cartel verde confirmando que tus gemas están listas.
+                    </p>
+                    <div class="step-footer">
+                        <a href="https://www.fut.gg/gg-club/hidden-gems/" target="_blank" rel="noopener" class="btn btn-surface" style="width: 100%;">
+                            🌐 Abrir FUT.GG Gems
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Paso 4 -->
+                <div class="step-item">
+                    <div class="step-header">
+                        <span class="step-index">04</span>
+                        <span class="step-icon">🎮</span>
+                    </div>
+                    <h3 class="step-title">Abre FC Web App</h3>
+                    <p class="step-text">
+                        Entra a la Web App oficial de EA FC 27. En la esquina inferior derecha verás el botón flotante <strong style="color:var(--fut-mint);">💎 [N]</strong> listo para usar.
+                    </p>
+                    <div class="step-footer">
+                        <a href="https://www.ea.com/ea-sports-fc/ultimate-team/web-app/" target="_blank" rel="noopener" class="btn btn-mint" style="width: 100%;">
+                            ⚽ Ir a la Web App
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Shortcut Banner -->
+        <div class="shortcut-card">
+            <div class="shortcut-text">
+                <h4>Atajo de Teclado Rápido</h4>
+                <p>Presiona la combinación en cualquier pantalla de la Web App para desplegar el panel de gemas al instante.</p>
+            </div>
+            <div class="keys-wrap">
+                <span class="kbd">Alt</span>
+                <span class="kbd-plus">+</span>
+                <span class="kbd">G</span>
+            </div>
+        </div>
+
+        <!-- Features Section -->
+        <section id="funciones">
+            <div class="section-header">
+                <span class="section-tag">Funcionalidades</span>
+                <h2 class="section-title">Ahorra Horas en el Mercado de Transferencias</h2>
+            </div>
+
+            <div class="features-container">
+                <div class="feat-box">
+                    <span class="feat-tag tag-orange">Seguridad Total</span>
+                    <h3 class="feat-title">🛡️ Comportamiento Humano Anti-Ban</h3>
+                    <p class="feat-desc">
+                        Búsquedas con esperas aleatorias (Gaussian Jitter de 3.0s a 4.5s), pausas preventivas cada 10 búsquedas y Circuit Breaker automático ante límites de EA.
+                    </p>
+                </div>
+
+                <div class="feat-box">
+                    <span class="feat-tag tag-mint">Multicapa</span>
+                    <h3 class="feat-title">📊 Escaneo de Todas las Páginas</h3>
+                    <p class="feat-desc">
+                        Recorre automáticamente todas las páginas de mercado por carta. Cuenta cuántas unidades existen a cada precio para que vendas al valor más alto posible.
+                    </p>
+                </div>
+
+                <div class="feat-box">
+                    <span class="feat-tag tag-blue">Protección de Monedas</span>
+                    <h3 class="feat-title">⚠️ Detección de Snipes y Errores</h3>
+                    <p class="feat-desc">
+                        Si alguien listó una carta por error a un precio ridículamente bajo, el script lo detecta y no basa el precio en ese error, protegiendo tus monedas.
+                    </p>
+                </div>
+
+                <div class="feat-box">
+                    <span class="feat-tag tag-orange">Automatización</span>
+                    <h3 class="feat-title">📥 Mover y Listar a 1 Clic</h3>
+                    <p class="feat-desc">
+                        Mueve tus gemas del club a la lista de transferibles y lístalas calculando el precio óptimo y la puja inicial correcta con un solo clic.
+                    </p>
+                </div>
+
+                <div class="feat-box">
+                    <span class="feat-tag tag-mint">En Vivo</span>
+                    <h3 class="feat-title">🔔 Alertas de Nuevas Joyas</h3>
+                    <p class="feat-desc">
+                        Monitorea tu club cada 30 minutos en segundo plano. Si FUT.GG detecta una nueva gema y está en tu club, una notificación en pantalla te lo indicará de inmediato.
+                    </p>
+                </div>
+
+                <div class="feat-box">
+                    <span class="feat-tag tag-blue">Ecosistema</span>
+                    <h3 class="feat-title">🤝 Compatible con Paletools</h3>
+                    <p class="feat-desc">
+                        Funciona a la perfección junto a Paletools y FUT Enhancer sin interferir con sus atajos ni alterar tu interfaz preferida del juego.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section id="faq">
+            <div class="section-header">
+                <span class="section-tag">Dudas Habituales</span>
+                <h2 class="section-title">Preguntas Frecuentes</h2>
+            </div>
+
+            <div class="faq-wrap">
+                <div class="faq-block">
+                    <div class="faq-header">
+                        <span>¿Cómo detecta mis gemas de FUT.GG?</span>
+                        <span class="faq-cross">+</span>
+                    </div>
+                    <div class="faq-body">
+                        Al tener tu cuenta abierta en <a href="https://www.fut.gg" target="_blank" rel="noopener" style="color:var(--fut-mint);">fut.gg</a>, el script detecta automáticamente tu lista de Hidden Gems y la sincroniza en tu navegador para que aparezca en la Web App de FC 27.
+                    </div>
+                </div>
+
+                <div class="faq-block">
+                    <div class="faq-header">
+                        <span>¿Funciona con Paletools activo al mismo tiempo?</span>
+                        <span class="faq-cross">+</span>
+                    </div>
+                    <div class="faq-body">
+                        Sí, al 100%. El helper fue diseñado específicamente para complementar Paletools. Puedes usar ambos scripts simultáneamente sin ningún tipo de conflicto.
+                    </div>
+                </div>
+
+                <div class="faq-block">
+                    <div class="faq-header">
+                        <span>¿En qué navegadores puedo utilizarlo?</span>
+                        <span class="faq-cross">+</span>
+                    </div>
+                    <div class="faq-body">
+                        En cualquier navegador compatible con extensiones: Google Chrome, Brave, Microsoft Edge, Mozilla Firefox, Opera o Vivaldi (tanto en Windows como en macOS y Linux).
+                    </div>
+                </div>
+
+                <div class="faq-block">
+                    <div class="faq-header">
+                        <span>¿Cómo actualizo el script cuando salgan mejoras?</span>
+                        <span class="faq-cross">+</span>
+                    </div>
+                    <div class="faq-body">
+                        El script incluye enlaces de auto-actualización vinculados al repositorio de GitHub. Tampermonkey comprobará las novedades automáticamente y te notificará cuando haya una nueva versión disponible.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast-alert">
+        <span id="toast-icon">📋</span>
+        <span id="toast-text">Código copiado al portapapeles</span>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>
+                <strong>FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper</strong> • v1.8.1
+            </p>
+            <p style="margin-top: 6px; font-size: 0.82rem;">
+                Repositorio Oficial en GitHub: <a href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener">todout/FUT.GG-Hidden-Gems</a>
+            </p>
+            <p style="margin-top: 8px; font-size: 0.75rem; color: #475569;">
+                Herramienta comunitaria independiente para EA SPORTS FC 27 y FUT.GG.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Interactive Script -->
+    <script>
+        function triggerToast(message, icon = '✅') {
+            const toast = document.getElementById('toast-alert');
+            const toastText = document.getElementById('toast-text');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastText.textContent = message;
+            toastIcon.textContent = icon;
+            toast.classList.add('show');
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        async function copyCode() {
+            try {
+                const res = await fetch('./fc27_futgg_gems_helper.user.js');
+                if (res.ok) {
+                    const text = await res.text();
+                    await navigator.clipboard.writeText(text);
+                    triggerToast('¡Código copiado al portapapeles con éxito!');
+                    return;
+                }
+            } catch (e) {
+                console.warn('Fetch fallback:', e);
+            }
+
+            // Fallback si corre en protocolo local file:///
+            window.open('./fc27_futgg_gems_helper.user.js', '_blank');
+            triggerToast('Abriendo archivo de script. Presiona Ctrl+A y Ctrl+C para copiar.', '📄');
+        }
+
+        // Accordion toggle
+        document.querySelectorAll('.faq-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const block = header.parentElement;
+                block.classList.toggle('open');
+            });
+        });
+    </script>
+</body>
+</html>

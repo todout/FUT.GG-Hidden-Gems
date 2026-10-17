@@ -1,0 +1,19 @@
+# Credenciales y cookies personales (¡NUNCA COMPARTIR!)
+cookies/
+*.txt
+*.json
+!hidden_gems.json
+
+# Archivos pesados de ingeniería inversa / volcados
+futgg_index.js
+paletools_source.js
+fut_gg_test.html
+
+# Cache de Python
+__pycache__/
+*.pyc
+
+# Entornos y logs
+.env
+.venv/
+env/
