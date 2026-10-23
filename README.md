@@ -27,10 +27,11 @@ Herramienta diseñada para automatizar y agilizar el flujo de trabajo entre **FU
    - Las joyas recién agregadas se marcan con la etiqueta `✨ NUEVA`.
    - Puedes forzar una recarga manual en cualquier momento con **"🔄 Cargar de FUT.GG"**.
 5. Haces clic en **"📥 Mover Todas a Transferibles"** (las mueve con delay seguro de 1.2s).
-6. Haces clic en **"📊 Comprobar Mercado (Todas las Páginas) [V]"** (o verificas individualmente):
-   - El script recorre **todas las páginas del mercado automáticamente por defecto**, simulando el ritmo de navegación de un humano (delays de 1.4s a 2.3s por página) con indicador de progreso en vivo (`⏳ Analizando pág. X...`) y botón `[⏹️ Detener]`.
-   - **Detección inteligente de errores / snipes**: Si alguien listó una carta por descuido a un precio absurdo (ej. 1.000 vs piso real de 1.400), el helper te avisa con `⚠️ Snipe / Posible error` y basa la sugerencia en el precio real para no regalar tus monedas.
-   - **Desplegable interactivo de precios**: Muestra un desglose completo con cuántas cartas hay a cada precio (ej: 2 a 1.000, 33 a 1.400, 26 a 1.500).
+6. Haces clic en **"📊 Chequear Mercado [V]"** (o verificas individualmente):
+   - **Búsqueda inteligente con filtro de precio (estilo Paletools)**: Ancla la consulta al precio estimado de FUT.GG con techo (`maxBuy`) y buffer de seguridad. Resuelve el mercado en **1 sola petición** para cartas masivas (en vez de recorrer 25-30 páginas), con fallback automático si el precio subió.
+   - **Corte temprano por saturación (Early Stopping)**: Si ya en la página 1 se detectan 3 o más cartas al precio mínimo, se detiene inmediatamente sin enviar peticiones innecesarias a EA.
+   - **Detección inteligente de errores / snipes**: Analiza dispersión de precios y tiempo de expiración (cartas con >57.5 min recién tiradas). Si detecta un snipe o ganga aislada, te avisa con `⚠️ Snipe / Posible error` y basa la sugerencia en el piso real de volumen.
+   - **Desplegable interactivo de precios**: Muestra un desglose con cuántas cartas hay a cada precio (con badges `⚠️ Snipe` y `⭐ Real`).
    - **Selección a 1-clic**: Puedes hacer clic en cualquiera de los precios del desglose para fijarlo inmediatamente como tu precio de venta.
 7. Ajustas precios si lo deseas con los botones `[-]` y `[+]`, y haces clic en **"🚀 Listar Seleccionadas"** (o en **"Mover"**). Localizador multicapa de 7 vías en tu club, plantilla y transferibles. (Se lista a 1 hora con puja inicial a 1 paso inferior).
 
