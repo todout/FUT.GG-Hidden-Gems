@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.9.4
+// @version      1.9.5
 // @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: botón Sync Club con cooldown dinámico y tooltip, auto-sync en segundo plano sin notificaciones invasivas, barra en 1 línea y tabla ultra compacta.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -1845,17 +1845,45 @@
             .futgg-table tr:hover td {
                 background: rgba(30, 44, 62, 0.5);
             }
-            /* Destacar cartas que se están vendiendo actualmente */
+            /* Cartas que se están vendiendo actualmente (abajo del todo) */
             .futgg-table tr.row-selling {
-                background: linear-gradient(90deg, rgba(0, 255, 136, 0.12) 0%, rgba(13, 148, 136, 0.16) 100%) !important;
-                border-left: 4px solid #00ff88 !important;
+                background: rgba(14, 25, 40, 0.75) !important;
+                border-left: 4px solid #00ccff !important;
+                opacity: 0.88;
+            }
+            .futgg-table tr.row-selling:hover {
+                opacity: 1;
             }
             .futgg-table tr.row-selling td {
-                border-top: 1px solid rgba(0, 255, 136, 0.35) !important;
-                border-bottom: 1px solid rgba(0, 255, 136, 0.35) !important;
+                border-top: 1px solid rgba(0, 204, 255, 0.22) !important;
+                border-bottom: 1px solid rgba(0, 204, 255, 0.22) !important;
             }
             .futgg-table tr.row-selling:hover td {
-                background: rgba(0, 255, 136, 0.18) !important;
+                background: rgba(0, 204, 255, 0.12) !important;
+            }
+
+            /* Separador de sección para cartas en venta */
+            .futgg-section-divider-row td {
+                padding: 12px 14px 6px 14px !important;
+                background: #0b131e !important;
+                border-top: 2px solid #1a2a3e !important;
+                border-bottom: 1px solid #1a2a3e !important;
+            }
+            .futgg-section-divider {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 11px;
+                font-weight: 800;
+                color: #00ccff;
+                letter-spacing: 0.6px;
+                text-transform: uppercase;
+            }
+            .futgg-section-divider::after {
+                content: '';
+                flex: 1;
+                height: 1px;
+                background: rgba(0, 204, 255, 0.25);
             }
 
             .futgg-player-cell {
@@ -1881,9 +1909,10 @@
                 font-weight: 600;
             }
             .futgg-tag.club { background: rgba(0, 255, 136, 0.15); color: #00ff88; border: 1px solid #00ff88; }
-            .futgg-tag.transfer { background: rgba(0, 204, 255, 0.15); color: #00ccff; border: 1px solid #00ccff; }
+            .futgg-tag.transfer { background: rgba(255, 170, 0, 0.15); color: #ffaa00; border: 1px solid #ffaa00; }
+            .futgg-tag.selling { background: rgba(0, 204, 255, 0.15); color: #00ccff; border: 1px solid #00ccff; }
             .futgg-tag.none { background: rgba(143, 160, 181, 0.1); color: #8fa0b5; }
-            .futgg-tag.extinct { background: rgba(255, 170, 0, 0.2); color: #ffaa00; border: 1px solid #ffaa00; }
+            .futgg-tag.extinct { background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid #ff5555; }
 
             .futgg-price-input {
                 width: 80px;
@@ -2976,6 +3005,46 @@
             return true;
         });
 
+        // Ordenamiento prioritario:
+        // 1. Disponibles para vender (arriba del todo): En Transferibles o En Club (Tradeable)
+        // 2. No escaneadas aún
+        // 3. Intransferibles en club
+        // 4. Vendiéndose activamente (abajo del todo, como solicitó el usuario)
+        // 5. Ya vendidas o fuera del club
+        displayedGems.sort((a, b) => {
+            const getPriority = (gem) => {
+                const eaId = Number(gem.eaId);
+                const selling = State.sellingMatches[eaId];
+                const inTransfer = State.transferMatches[eaId];
+                const inClub = State.clubMatches[eaId];
+                const sold = State.soldMatches[eaId];
+
+                // Prioridad 1: En transferibles (listas para listar de inmediato)
+                if (inTransfer) return 1;
+                // Prioridad 2: En club comerciables (listas para mover o listar)
+                if (inClub && isItemTradeable(inClub)) return 2;
+                // Prioridad 3: No escaneadas aún
+                if (!hasScanned && !selling && !sold) return 3;
+                // Prioridad 4: Intransferibles en club
+                if (inClub && !isItemTradeable(inClub)) return 4;
+                // Prioridad 5: Vendiéndose activamente en mercado (abajo del todo)
+                if (selling) return 5;
+                // Prioridad 6: Ya vendidas
+                if (sold) return 6;
+                // Prioridad 7: Fuera del club
+                return 7;
+            };
+
+            const prioA = getPriority(a);
+            const prioB = getPriority(b);
+            if (prioA !== prioB) {
+                return prioA - prioB;
+            }
+
+            // Dentro del mismo grupo, ordenar por mayor beneficio de monedas estimado
+            return (b.profit || b.estimatedPrice || 0) - (a.profit || a.estimatedPrice || 0);
+        });
+
         const gemsCountEl = document.getElementById('futgg-gems-count');
         if (gemsCountEl) {
             gemsCountEl.textContent = `${displayedGems.length} visibles (${availableCount} para vender, ${sellingCount} vendiéndose, ${soldOrMissingCount} vendidas/fuera de club)`;
@@ -3010,6 +3079,9 @@
                 <tbody>
         `;
 
+        let hasShownSellingSeparator = false;
+        let itemsRenderedBeforeSelling = 0;
+
         for (const gem of displayedGems) {
             const eaId = Number(gem.eaId);
             const inClub = State.clubMatches[eaId];
@@ -3019,12 +3091,30 @@
             const market = State.marketPrices[eaId];
             const customPrice = State.customPrices[eaId] || gem.estimatedPrice || 0;
 
+            // Separador de sección visual antes de las cartas que ya se están vendiendo en el mercado
+            if (selling && !hasShownSellingSeparator && itemsRenderedBeforeSelling > 0) {
+                hasShownSellingSeparator = true;
+                html += `
+                    <tr class="futgg-section-divider-row">
+                        <td colspan="6">
+                            <div class="futgg-section-divider">
+                                <span>🚀 Ya Listadas en el Mercado (${sellingCount} ${sellingCount === 1 ? 'carta' : 'cartas'})</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            if (!selling) {
+                itemsRenderedBeforeSelling++;
+            }
+
             // Estado del club
             let clubStatusHtml = '';
             if (selling) {
                 const remainingSec = selling.expiresAt ? Math.max(0, Math.floor((selling.expiresAt - Date.now()) / 1000)) : (selling.expires || 0);
                 const timeStr = formatTimeRemaining(remainingSec);
-                clubStatusHtml = `<span class="futgg-tag selling" style="background:rgba(0,255,136,0.18); color:#00ff88; border:1px solid #00ff88; font-weight:700;">🚀 VENDIÉNDOSE (${timeStr})</span>`;
+                clubStatusHtml = `<span class="futgg-tag selling">🚀 Vendiéndose (${timeStr})</span>`;
             } else if (inTransfer) {
                 clubStatusHtml = `<span class="futgg-tag transfer">📋 En Transferibles</span>`;
             } else if (inClub) {
@@ -3173,7 +3263,7 @@
                 const timeStr = formatTimeRemaining(remainingSec);
                 actionHtml = `
                     <div style="display:flex; gap:4px; align-items:center;">
-                        <span class="futgg-tag" style="background:#131c28; color:#00ff88; border:1px solid #243346; padding:5px 8px; font-size:11px; font-weight:700;">⏱️ En Venta (${timeStr})</span>
+                        <span class="futgg-tag selling" style="padding:4px 8px; font-size:11px; font-weight:700;">⏱️ Expira: ${timeStr}</span>
                     </div>
                 `;
             } else if (inTransfer) {
@@ -3210,7 +3300,7 @@
                             <div>
                                 <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:6px;">
                                     <span>${gem.name}</span>
-                                    ${selling ? '<span class="futgg-tag selling" style="background:rgba(0,255,136,0.25); color:#00ff88; border:1px solid #00ff88; font-size:10px; font-weight:800; padding:1px 5px;">🚀 EN VENTA</span>' : ''}
+                                    ${selling ? '<span class="futgg-tag selling" style="font-size:10px; font-weight:800; padding:1px 6px;">🚀 EN VENTA</span>' : ''}
                                     ${State.newGemIds && State.newGemIds.has(eaId) ? '<span class="futgg-new-badge">✨ NUEVA</span>' : ''}
                                 </div>
                                 <div style="font-size:11px; color:#8fa0b5;">${gem.club || 'Club'} (ID: ${eaId})</div>
