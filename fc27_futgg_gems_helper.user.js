@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.3
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción automática de cartas SBC (bronces y platas caros), verificación inteligente en vivo con rotación anti-caché de EA, detección de snipes y listador seguro.
+// @version      1.10.4
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción automática de cartas SBC (bronces y platas caros), verificación inteligente en vivo con rotación anti-caché de EA, detección de snipes, soporte para cartas extintas (90% máx) y listador seguro.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -883,9 +883,19 @@
         return Math.max(200, validBuyNow - step);
     }
 
-    function randomDelay(min, max) {
-        const jitter = Math.random() * (max - min);
-        return new Promise(resolve => setTimeout(resolve, min + jitter));
+    function randomDelay(min, max, cancelCheck = null) {
+        const total = min + Math.random() * (max - min);
+        return new Promise(resolve => {
+            const interval = 80;
+            let elapsed = 0;
+            const timer = setInterval(() => {
+                elapsed += interval;
+                if (elapsed >= total || (cancelCheck && cancelCheck()) || State.forceCancelAllOperations) {
+                    clearInterval(timer);
+                    resolve();
+                }
+            }, interval);
+        });
     }
 
     function formatCoins(num) {
@@ -1199,6 +1209,8 @@
         customPrices: {},      // eaId -> precio de venta elegido por el usuario
         focusedGemId: null,    // eaId de la carta actualmente bajo interacción (para mantener el foco tras reordenar)
         isBatchRunning: false,
+        isScanningClub: false,
+        forceCancelAllOperations: false,
         batchStatusText: '',
         searchCountSession: 0,
         lastSyncTimestamp: 0,
@@ -1212,8 +1224,35 @@
         State.futbinSbcData = GM_getValue('futbin_sbc_data', null);
     } catch (e) { }
 
+    function getItemMaxPrice(eaId, card) {
+        const numId = Number(eaId);
+        const item = State.transferMatches[numId] || State.clubMatches[numId] || (State.sellingMatches[numId] && State.sellingMatches[numId].item);
+        if (item) {
+            if (item._itemPriceLimits && item._itemPriceLimits.maximum > 0) {
+                return item._itemPriceLimits.maximum;
+            }
+            if (typeof item.hasPriceLimits === 'function' && item.hasPriceLimits()) {
+                if (item._itemPriceLimits && item._itemPriceLimits.maximum > 0) {
+                    return item._itemPriceLimits.maximum;
+                }
+            }
+        }
+        // Fallback según calidad o rating si la carta aún no está en RAM
+        const rating = card ? (card.rating || 0) : 0;
+        const quality = card ? (card.quality || '') : '';
+        if (quality === 'bronze' || (rating > 0 && rating <= 64)) {
+            return 10000;
+        }
+        if (quality === 'silver' || (rating >= 65 && rating <= 74)) {
+            return 10000;
+        }
+        return 10000;
+    }
+
     function isMinimumPrice(player, market) {
-        if (!market || !market.lowestBin) return false;
+        if (!market) return false;
+        if (market.isExtinct) return false; // ¡Una carta extinta nunca está a precio mínimo!
+        if (!market.lowestBin) return false;
         const bin = market.hasOutlier ? market.realisticBin : market.lowestBin;
         const quality = player.quality || (player.rating && player.rating <= 64 ? 'bronze' : (player.rating && player.rating <= 74 ? 'silver' : 'gold'));
         if (quality === 'bronze' || (player.rating && player.rating <= 64)) {
@@ -1226,7 +1265,9 @@
     }
 
     function isInflatedGem(player, market) {
-        if (!market || !market.lowestBin) return false;
+        if (!market) return false;
+        if (market.isExtinct) return true; // ¡Extinta es la joya máxima!
+        if (!market.lowestBin) return false;
         const bin = market.hasOutlier ? market.realisticBin : market.lowestBin;
         const quality = player.quality || (player.rating && player.rating <= 64 ? 'bronze' : (player.rating && player.rating <= 74 ? 'silver' : 'gold'));
         if (quality === 'bronze' || (player.rating && player.rating <= 64)) {
@@ -1615,6 +1656,7 @@
         const eaId = Number(gem.eaId);
         State.focusedGemId = eaId; // Mantener foco visual en esta carta tras reordenar
         State.abortMarketCrawl[eaId] = false;
+        if (!isAutomated) State.forceCancelAllOperations = false;
         State.marketPrices[eaId] = {
             loading: true,
             crawling: true,
@@ -1631,7 +1673,7 @@
             try { services.Item.clearTransferMarketCache(); } catch (e) { }
         }
 
-        const estPrice = Number(gem.estimatedPrice || 0);
+        const estPrice = Number(gem.estimatedPrice || gem.futbinPrice || 0);
 
         // Estrategia de búsqueda progresiva inteligente:
         // Etapa 1: Filtro inicial acotado (+15% / 2 bid steps sobre estPrice de FUT.GG)
@@ -1644,16 +1686,21 @@
 
         try {
             while (stage <= 3) {
-                if (State.abortMarketCrawl[eaId]) {
+                if (State.abortMarketCrawl[eaId] || State.forceCancelAllOperations || (!State.isBatchRunning && isAutomated)) {
                     notificar(`⏹️ Verificación detenida por el usuario para ${gem.name}`, "#ffaa00");
                     break;
                 }
 
                 // Delay humano entre etapas o peticiones automatizadas
                 if (stage > 1) {
-                    await randomDelay(CONFIG.pageDelayMin || 1400, CONFIG.pageDelayMax || 2300);
+                    await randomDelay(CONFIG.pageDelayMin || 1400, CONFIG.pageDelayMax || 2300, () => State.abortMarketCrawl[eaId] || State.forceCancelAllOperations);
                 } else if (isAutomated) {
-                    await randomDelay(CONFIG.minMarketDelay, CONFIG.maxMarketDelay);
+                    await randomDelay(CONFIG.minMarketDelay, CONFIG.maxMarketDelay, () => State.abortMarketCrawl[eaId] || State.forceCancelAllOperations);
+                }
+
+                if (State.abortMarketCrawl[eaId] || State.forceCancelAllOperations || (!State.isBatchRunning && isAutomated)) {
+                    notificar(`⏹️ Verificación detenida por el usuario para ${gem.name}`, "#ffaa00");
+                    break;
                 }
 
                 // Pausa de seguridad anti-ban si superamos ráfagas
@@ -1780,24 +1827,41 @@
                     subCriteria.maxBuy = checkMaxBuy;
                     subCriteria.__futggCustomBusted = true;
 
-                    await randomDelay(1000, 1500);
-                    const subRes = await callEAService(services.Item.searchTransferMarket(subCriteria, 1));
-                    const subPageItems = extractItemsFromEaResponse(subRes);
-                    const subValidItems = (subPageItems || []).filter(it => matchesCard(it, eaId, gem.name));
-                    if (subValidItems.length > 0) {
-                        allItems = subValidItems;
-                        filterLabel = `≤ ${formatCoins(checkMaxBuy)} (piso verificado)`;
-                        console.log(`[FUT.GG Helper] 🟢 ¡Piso más barato encontrado! ${subValidItems.length} cartas a ${filterLabel}`);
-                    } else {
-                        console.log(`[FUT.GG Helper] ✅ Confirmado: 0 cartas bajo ${formatCoins(checkMaxBuy)}. El piso real inicia en ${formatCoins(tempLowest)}.`);
+                    await randomDelay(1000, 1500, () => State.abortMarketCrawl[eaId] || State.forceCancelAllOperations);
+                    if (!State.abortMarketCrawl[eaId] && !State.forceCancelAllOperations && (State.isBatchRunning || !isAutomated)) {
+                        const subRes = await callEAService(services.Item.searchTransferMarket(subCriteria, 1));
+                        const subPageItems = extractItemsFromEaResponse(subRes);
+                        const subValidItems = (subPageItems || []).filter(it => matchesCard(it, eaId, gem.name));
+                        if (subValidItems.length > 0) {
+                            allItems = subValidItems;
+                            filterLabel = `≤ ${formatCoins(checkMaxBuy)} (piso verificado)`;
+                            console.log(`[FUT.GG Helper] 🟢 ¡Piso más barato encontrado! ${subValidItems.length} cartas a ${filterLabel}`);
+                        } else {
+                            console.log(`[FUT.GG Helper] ✅ Confirmado: 0 cartas bajo ${formatCoins(checkMaxBuy)}. El piso real inicia en ${formatCoins(tempLowest)}.`);
+                        }
                     }
                 }
             }
 
+            const wasAborted = State.abortMarketCrawl[eaId] || State.forceCancelAllOperations || (!State.isBatchRunning && isAutomated);
+            if (wasAborted) {
+                console.log(`[FUT.GG Helper] ⏹️ Verificación de mercado abortada/detenida para ${gem.name}`);
+                if (State.marketPrices[eaId]) {
+                    State.marketPrices[eaId].crawling = false;
+                    State.marketPrices[eaId].loading = false;
+                }
+                return;
+            }
+
             if (allItems.length === 0) {
+                const maxPrice = getItemMaxPrice(eaId, gem);
+                const safe90Price = roundToValidBid(Math.round(maxPrice * 0.90), 'down');
+
                 State.marketPrices[eaId] = {
-                    lowestBin: null,
-                    realisticBin: null,
+                    lowestBin: safe90Price,
+                    realisticBin: safe90Price,
+                    suggestedExtinctBin: safe90Price,
+                    maxPrice: maxPrice,
                     count: 0,
                     isExtinct: true,
                     tiers: [],
@@ -1809,10 +1873,8 @@
                     loading: false,
                     updatedAt: Date.now()
                 };
-                if (!State.customPrices[eaId]) {
-                    State.customPrices[eaId] = gem.estimatedPrice || 10000;
-                }
-                notificar(`💎 ${gem.name}: ¡Extinta en mercado! (0 listados activos)`, "#ffaa00");
+                State.customPrices[eaId] = safe90Price;
+                notificar(`💎 ${gem.name}: ¡Extinta en mercado! Sugerido 90% máx: ${formatCoins(safe90Price)} (evita ban por vender al 100%)`, "#ffaa00");
             } else {
                 const analysis = analyzeMarketTiers(allItems);
 
@@ -1856,6 +1918,10 @@
                 throw err;
             }
         } finally {
+            if (State.marketPrices[eaId]) {
+                State.marketPrices[eaId].crawling = false;
+                State.marketPrices[eaId].loading = false;
+            }
             renderCurrentTable();
         }
     }
@@ -1873,7 +1939,7 @@
                     dialogController.close();
                 }
             }
-            const dialogs = document.querySelectorAll('.ea-dialog-view, .ut-click-shield, .dialog-view, .Dialog, .view-modal-dialog');
+            const dialogs = document.querySelectorAll('.ea-dialog-view, .dialog-view, .Dialog, .view-modal-dialog');
             dialogs.forEach(d => {
                 const text = (d.textContent || '').toLowerCase();
                 if (text.includes('full') || text.includes('llena') || text.includes('destination') || text.includes('destino') || text.includes('no se ha podido')) {
@@ -1997,7 +2063,7 @@
         }
     }
 
-    async function listCardOnMarket(gem) {
+    async function listCardOnMarket(gem, overridePrice = null) {
         const win = getAppWindow();
         const services = win.services;
         const eaId = Number(gem.eaId);
@@ -2024,7 +2090,29 @@
             return;
         }
 
-        const buyNow = State.customPrices[eaId] || gem.estimatedPrice || 1000;
+        const market = State.marketPrices[eaId];
+        let buyNow = overridePrice || State.customPrices[eaId];
+        if (!buyNow) {
+            if (market && market.isExtinct) {
+                const maxPrice = getItemMaxPrice(eaId, gem);
+                buyNow = roundToValidBid(Math.round(maxPrice * 0.90), 'down');
+            } else if (market && market.lowestBin) {
+                buyNow = Math.max(200, (market.hasOutlier ? market.realisticBin : market.lowestBin) - CONFIG.undercutAmount);
+            } else {
+                buyNow = gem.estimatedPrice || (gem.futbinPrice || 1000);
+            }
+        }
+
+        // Si la carta está extinta, asegurarse de que NO exceda el 90% del precio máximo para evitar baneos de EA
+        if (market && market.isExtinct) {
+            const maxPrice = getItemMaxPrice(eaId, gem);
+            const safeCap = roundToValidBid(Math.round(maxPrice * 0.90), 'down');
+            if (buyNow > safeCap) {
+                console.log(`[FUT.GG Helper] 🛡️ Ajustando precio de ${gem.name} extinto de ${buyNow} a ${safeCap} (90% del máx) para evitar baneo`);
+                buyNow = safeCap;
+            }
+        }
+
         const validBuyNow = roundToValidBid(buyNow, 'down');
         const startBid = calculateStartBid(validBuyNow);
 
@@ -2088,8 +2176,12 @@
     }
 
     async function batchCheckAllMarketPrices() {
-        if (State.isBatchRunning) return;
+        if (State.isBatchRunning) {
+            cancelBatch();
+            return;
+        }
         State.isBatchRunning = true;
+        State.forceCancelAllOperations = false;
         renderBatchControls();
 
         const gemsToCheck = State.gems.filter(g => {
@@ -2111,7 +2203,7 @@
 
         let count = 0;
         for (const gem of gemsToCheck) {
-            if (!State.isBatchRunning) break;
+            if (!State.isBatchRunning || State.forceCancelAllOperations) break;
             count++;
             updateBatchStatus(`Comparando precio ${count}/${gemsToCheck.length}: ${gem.name}...`);
             try {
@@ -2120,10 +2212,11 @@
                 console.error("Error en batch market check:", e);
                 break;
             }
+            if (!State.isBatchRunning || State.forceCancelAllOperations) break;
         }
 
         State.isBatchRunning = false;
-        updateBatchStatus(`Comparación de mercado completada.`);
+        updateBatchStatus(State.forceCancelAllOperations ? "⏹️ Verificación detenida por el usuario." : `Comparación de mercado completada.`);
         renderBatchControls();
     }
 
@@ -2151,13 +2244,13 @@
 
         let count = 0;
         for (const gem of gemsToList) {
-            if (!State.isBatchRunning) break;
+            if (!State.isBatchRunning || State.forceCancelAllOperations) break;
             count++;
             const price = State.customPrices[gem.eaId] || gem.estimatedPrice;
             updateBatchStatus(`Listando ${count}/${gemsToList.length}: ${gem.name} por ${formatCoins(price)}...`);
 
             await listCardOnMarket(gem);
-            await randomDelay(CONFIG.listDelay, CONFIG.listDelay + 1000);
+            await randomDelay(CONFIG.listDelay, CONFIG.listDelay + 1000, () => State.forceCancelAllOperations);
         }
 
         State.isBatchRunning = false;
@@ -2167,8 +2260,25 @@
 
     function cancelBatch() {
         State.isBatchRunning = false;
-        updateBatchStatus("Operación cancelada por el usuario.");
+        State.forceCancelAllOperations = true;
+        State.isScanningClub = false;
+        if (State.abortMarketCrawl) {
+            for (const id of Object.keys(State.abortMarketCrawl)) {
+                State.abortMarketCrawl[id] = true;
+            }
+        }
+        if (State.marketPrices) {
+            for (const id of Object.keys(State.marketPrices)) {
+                if (State.marketPrices[id] && (State.marketPrices[id].loading || State.marketPrices[id].crawling)) {
+                    State.marketPrices[id].loading = false;
+                    State.marketPrices[id].crawling = false;
+                }
+            }
+        }
+        updateBatchStatus("⏹️ Operación detenida por el usuario.");
+        notificar("⏹️ Verificación de mercado detenida", "#ffaa00");
         renderBatchControls();
+        renderCurrentTable();
     }
 
     // =========================================================================
@@ -2257,24 +2367,121 @@
         }
     }
 
+    function matchFutbinPlayersWithKnownItems() {
+        if (!State.futbinSbcData || !State.futbinSbcData.players) return 0;
+        let matched = 0;
+        const win = getAppWindow();
+
+        // Cargar transferibles si están disponibles en RAM
+        if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
+            try {
+                const trItems = win.repositories.Item.getTransferList();
+                if (trItems && trItems.length) {
+                    for (const it of trItems) {
+                        const itDefId = it.defId || it.resourceId;
+                        if (itDefId) State.transferMatches[Number(itDefId)] = it;
+                    }
+                }
+            } catch (e) { }
+        }
+
+        for (const p of State.futbinSbcData.players) {
+            const eaId = Number(p.eaId);
+            if (State.sellingMatches[eaId] || State.transferMatches[eaId] || State.clubMatches[eaId]) {
+                matched++;
+            }
+        }
+        updateFutbinTabBadge();
+        return matched;
+    }
+
     async function scanClubForFutbinPlayers() {
         if (!State.futbinSbcData || !State.futbinSbcData.players) {
             notificar("No hay soluciones SBC de FUTBIN cargadas.", "#ffaa00");
             return;
         }
-        notificar("🔍 Buscando jugadores del SBC en tu Club y Transferibles...", "#00ccff");
-        let found = 0;
-        for (const p of State.futbinSbcData.players) {
-            const item = await findCardInAccount(p);
-            if (item) found++;
+
+        if (State.isScanningClub) {
+            State.isScanningClub = false;
+            State.forceCancelAllOperations = true;
+            notificar("⏹️ Escaneo de club detenido por el usuario", "#ffaa00");
+            renderBatchControls();
+            return;
         }
-        updateFutbinTabBadge();
+
+        // 1. Coincidencia rápida en memoria RAM (0 peticiones de red)
+        matchFutbinPlayersWithKnownItems();
         renderFutbinSbcTable();
-        notificar(`✅ Búsqueda completada: ${found} jugadores de soluciones encontrados en tu cuenta`, "#00ff88");
+
+        const missing = State.futbinSbcData.players.filter(p => {
+            const eaId = Number(p.eaId);
+            return !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId];
+        });
+
+        if (missing.length === 0) {
+            notificar("✅ Todos los jugadores ya fueron verificados en tu cuenta", "#00ff88");
+            return;
+        }
+
+        State.isScanningClub = true;
+        State.forceCancelAllOperations = false;
+        renderBatchControls();
+        notificar(`🔍 Comprobando ${missing.length} cartas en tu Club con delays seguros...`, "#00ccff");
+
+        const win = getAppWindow();
+        let found = 0;
+        let index = 0;
+
+        try {
+            for (const p of missing) {
+                if (!State.isScanningClub || State.forceCancelAllOperations) break;
+                index++;
+                const eaId = Number(p.eaId);
+                const name = p.name || 'Carta';
+
+                updateBatchStatus(`Club (${index}/${missing.length}): Comprobando ${name}...`);
+
+                // Consulta segura ÚNICA y directa a services.Club.search por defId
+                if (win.services && win.services.Club && typeof win.services.Club.search === 'function') {
+                    try {
+                        const criteria = createSearchCriteria(eaId);
+                        criteria.count = 15;
+                        criteria.offset = 0;
+                        criteria.type = 'player';
+                        criteria.maskedDefId = eaId;
+                        criteria.defId = [eaId];
+
+                        const res = await callEAService(win.services.Club.search(criteria));
+                        const items = extractItemsFromEaResponse(res);
+                        const match = items && items.find(it => matchesCard(it, eaId, name));
+                        if (match) {
+                            match._isTradeable = isItemTradeable(match);
+                            State.clubMatches[eaId] = match;
+                            found++;
+                            console.log(`[FUTBIN SBC] 🟢 Encontrado en club: ${name}`, match);
+                        }
+                    } catch (err) {
+                        console.warn(`[FUTBIN SBC] Error al consultar ${name} en club:`, err);
+                    }
+                }
+
+                // Delay seguro entre consultas individuales para no saturar EA
+                await randomDelay(600, 1000, () => !State.isScanningClub || State.forceCancelAllOperations);
+            }
+        } finally {
+            State.isScanningClub = false;
+            updateFutbinTabBadge();
+            renderFutbinSbcTable();
+            renderBatchControls();
+            notificar(`✅ Escaneo finalizado: ${found} cartas encontradas en tu club`, "#00ff88");
+        }
     }
 
     async function batchCheckFutbinMarketPrices() {
-        if (State.isBatchRunning) return;
+        if (State.isBatchRunning) {
+            cancelBatch();
+            return;
+        }
         if (!State.futbinSbcData || !State.futbinSbcData.players) return;
 
         const playersToCheck = getFilteredFutbinPlayers();
@@ -2284,11 +2491,12 @@
         }
 
         State.isBatchRunning = true;
+        State.forceCancelAllOperations = false;
         renderBatchControls();
 
         let count = 0;
         for (const p of playersToCheck) {
-            if (!State.isBatchRunning) break;
+            if (!State.isBatchRunning || State.forceCancelAllOperations) break;
             count++;
             updateBatchStatus(`SBC (${count}/${playersToCheck.length}): Verificando ${p.name}...`);
             try {
@@ -2297,10 +2505,11 @@
                 console.error("Error en batch FUTBIN check:", e);
                 break;
             }
+            if (!State.isBatchRunning || State.forceCancelAllOperations) break;
         }
 
         State.isBatchRunning = false;
-        updateBatchStatus("Comparación de mercado SBC completada.");
+        updateBatchStatus(State.forceCancelAllOperations ? "⏹️ Verificación detenida por el usuario." : "Comparación de mercado SBC completada.");
         renderBatchControls();
         renderFutbinSbcTable();
     }
@@ -2336,13 +2545,14 @@
 
         let count = 0;
         for (const p of candidates) {
-            if (!State.isBatchRunning) break;
+            if (!State.isBatchRunning || State.forceCancelAllOperations) break;
             count++;
-            const price = State.customPrices[p.eaId] || (State.marketPrices[p.eaId] ? Math.max(200, State.marketPrices[p.eaId].lowestBin - CONFIG.undercutAmount) : 0);
+            const market = State.marketPrices[p.eaId];
+            const price = State.customPrices[p.eaId] || (market ? (market.isExtinct ? market.suggestedExtinctBin : Math.max(200, market.lowestBin - CONFIG.undercutAmount)) : 0);
             updateBatchStatus(`Listando ${count}/${candidates.length}: ${p.name} por ${formatCoins(price)}...`);
 
             await listCardOnMarket(p, price);
-            await randomDelay(CONFIG.listDelay, CONFIG.listDelay + 1000);
+            await randomDelay(CONFIG.listDelay, CONFIG.listDelay + 1000, () => State.forceCancelAllOperations);
         }
 
         State.isBatchRunning = false;
@@ -2384,8 +2594,8 @@
                     const badge = document.getElementById('futbin-tab-badge');
                     if (badge) badge.textContent = data.players.length;
                     notificar(`🟢 ¡${data.players.length} jugadores cargados del SBC "${data.challengeTitle || 'SBC'}"!`, "#00ff88");
+                    matchFutbinPlayersWithKnownItems();
                     renderFutbinSbcTable();
-                    scanClubForFutbinPlayers();
                     resolve(data);
                 } else {
                     reject(new Error("No se recibieron cartas válidas de FUTBIN."));
@@ -3510,12 +3720,6 @@
                     <button class="futgg-btn" id="futgg-scan-club-btn" style="padding:5px 10px; font-size:11px;" title="Comprueba si las joyas están en tu inventario local (Club, Transferibles, Sin Asignar)">🔍 Escanear Club</button>
                 </div>
 
-                <!-- Estado del lote / Batch si está en curso -->
-                <div id="futgg-batch-controls" style="display:none; align-items:center; gap:8px;">
-                    <span id="futgg-batch-status" style="font-size:11px; color:#ffaa00; font-weight:bold;">Procesando...</span>
-                    <button class="futgg-btn danger" id="futgg-cancel-batch-btn" style="padding:3px 8px; font-size:10px;">Detener</button>
-                </div>
-
                 <!-- Grupo Acciones en Lote -->
                 <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
                     <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Acciones:</span>
@@ -3568,6 +3772,15 @@
                     <button class="futgg-btn" id="futbin-check-market-btn" style="padding:5px 8px; font-size:11px;" title="Revisar el precio de mercado real progresivo de estas cartas">📊 Chequear Mercado</button>
                     <button class="futgg-btn primary" id="futbin-list-profitable-btn" style="padding:5px 10px; font-size:11px;" title="Listar únicamente las cartas rentables que NO estén a precio mínimo">🚀 Listar Rentables</button>
                 </div>
+            </div>
+
+            <!-- Banner Universal de Estado de Operación / Batch (visible en cualquier pestaña activa) -->
+            <div id="futgg-batch-controls" style="display:none; align-items:center; justify-content:space-between; background:#1e293b; border:1px solid #ffaa00; padding:6px 12px; margin:6px 0; border-radius:8px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:14px;">⏳</span>
+                    <span id="futgg-batch-status" style="font-size:12px; color:#ffaa00; font-weight:bold;">Procesando...</span>
+                </div>
+                <button class="futgg-btn danger" id="futgg-cancel-batch-btn" style="padding:4px 12px; font-size:11px; font-weight:bold; background:#ef4444; color:#fff; border:none; cursor:pointer;" title="Detener inmediatamente la verificación o escaneo actual">⏹️ Detener Operación</button>
             </div>
             <div id="futgg-token-panel" style="display:none; flex-direction:column; gap:6px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
@@ -3644,8 +3857,8 @@
                     if (latest && latest.players && latest.players.length > 0) {
                         State.futbinSbcData = latest;
                         notificar(`🟢 Soluciones del SBC "${latest.challengeTitle}" cargadas (${latest.players.length} jugadores)`, "#00ff88");
+                        matchFutbinPlayersWithKnownItems();
                         renderFutbinSbcTable();
-                        scanClubForFutbinPlayers();
                     } else {
                         notificar("No hay datos de soluciones válidos guardados aún de FUTBIN", "#ffaa00");
                     }
@@ -3776,7 +3989,6 @@
         });
 
         setupFutbinSbcSyncListener();
-        setupTransferMarketCacheBusterHook();
     }
 
     // Listener reactivo global para sincronizaciones emitidas desde FUTBIN
@@ -3793,8 +4005,8 @@
                         if (badge) badge.textContent = latest.players.length;
                         if (State.activeTab === 'futbin') {
                             notificar(`🧩 Soluciones del SBC "${latest.challengeTitle || 'SBC'}" actualizadas desde FUTBIN`, "#00ff88");
+                            matchFutbinPlayersWithKnownItems();
                             renderFutbinSbcTable();
-                            scanClubForFutbinPlayers();
                         }
                     }
                 });
@@ -3802,34 +4014,6 @@
                 console.warn("[FUTBIN Helper] Error al registrar GM_addValueChangeListener:", e);
             }
         }
-    }
-
-    // Interceptor global de mercado para evitar resultados cacheados por EA en búsquedas manuales o automáticas
-    function setupTransferMarketCacheBusterHook() {
-        const win = getAppWindow();
-        if (!win || !win.services || !win.services.Item) return;
-        if (win.services.Item.__futggSearchHooked) return;
-        win.services.Item.__futggSearchHooked = true;
-
-        const origSearch = win.services.Item.searchTransferMarket;
-        win.services.Item.searchTransferMarket = function (criteria, page) {
-            if (criteria && !criteria.__futggCustomBusted) {
-                // Si la búsqueda no tiene una puja mínima personalizada (> 150),
-                // rotamos minBid 150 / vacío para que EA no cachee búsquedas repetidas
-                if (!criteria.minBid || criteria.minBid <= 150) {
-                    State.nativeMarketNonce = (State.nativeMarketNonce || 0) + 1;
-                    if (State.nativeMarketNonce % 2 === 1) {
-                        criteria.minBid = 150;
-                    } else {
-                        delete criteria.minBid;
-                    }
-                }
-            }
-            if (typeof win.services.Item.clearTransferMarketCache === 'function') {
-                try { win.services.Item.clearTransferMarketCache(); } catch (e) { }
-            }
-            return origSearch.apply(this, arguments);
-        };
     }
 
     function updateTokenStatusBadge() {
@@ -3981,8 +4165,52 @@
 
     function renderBatchControls() {
         const batchControls = document.getElementById('futgg-batch-controls');
-        if (!batchControls) return;
-        batchControls.style.display = State.isBatchRunning ? 'flex' : 'none';
+        const isRunning = State.isBatchRunning || State.isScanningClub;
+        if (batchControls) {
+            batchControls.style.display = isRunning ? 'flex' : 'none';
+        }
+
+        // Botón Chequear Mercado en pestaña FUT.GG
+        const hgBtn = document.getElementById('futgg-batch-check-btn');
+        if (hgBtn) {
+            if (State.isBatchRunning && State.activeTab === 'futgg') {
+                hgBtn.innerHTML = '⏹️ Detener Mercado';
+                hgBtn.style.borderColor = '#ff4444';
+                hgBtn.style.color = '#ff6666';
+            } else {
+                hgBtn.innerHTML = '📊 Chequear Mercado';
+                hgBtn.style.borderColor = '';
+                hgBtn.style.color = '';
+            }
+        }
+
+        // Botón Chequear Mercado en pestaña FUTBIN
+        const fbBtn = document.getElementById('futbin-check-market-btn');
+        if (fbBtn) {
+            if (State.isBatchRunning && State.activeTab === 'futbin') {
+                fbBtn.innerHTML = '⏹️ Detener Mercado';
+                fbBtn.style.borderColor = '#ff4444';
+                fbBtn.style.color = '#ff6666';
+            } else {
+                fbBtn.innerHTML = '📊 Chequear Mercado';
+                fbBtn.style.borderColor = '';
+                fbBtn.style.color = '';
+            }
+        }
+
+        // Botón Buscar en Club en pestaña FUTBIN
+        const fbScanBtn = document.getElementById('futbin-scan-club-btn');
+        if (fbScanBtn) {
+            if (State.isScanningClub) {
+                fbScanBtn.innerHTML = '⏹️ Detener Escaneo';
+                fbScanBtn.style.borderColor = '#ff4444';
+                fbScanBtn.style.color = '#ff6666';
+            } else {
+                fbScanBtn.innerHTML = '🔍 Buscar en Club';
+                fbScanBtn.style.borderColor = '';
+                fbScanBtn.style.color = '';
+            }
+        }
     }
 
     async function loadGemsFromFutGg(isAuto = false) {
@@ -4264,7 +4492,15 @@
             const selling = State.sellingMatches[eaId];
             const sold = State.soldMatches[eaId];
             const market = State.marketPrices[eaId];
-            const customPrice = State.customPrices[eaId] || gem.estimatedPrice || 0;
+            let customPrice = State.customPrices[eaId];
+            if (!customPrice) {
+                if (market && market.isExtinct) {
+                    customPrice = market.suggestedExtinctBin || roundToValidBid(Math.round(getItemMaxPrice(eaId, gem) * 0.90), 'down');
+                    State.customPrices[eaId] = customPrice;
+                } else {
+                    customPrice = gem.estimatedPrice || 0;
+                }
+            }
 
             // Separador de sección visual antes de las cartas que ya se están vendiendo en el mercado
             if (selling && !hasShownSellingSeparator && itemsRenderedBeforeSelling > 0) {
@@ -4320,13 +4556,19 @@
                     </div>
                 `;
             } else if (market && market.loading) {
-                marketHtml = `<span style="color:#ffaa00; font-weight:bold;">⏳ Buscando en mercado...</span>`;
+                marketHtml = `
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="color:#ffaa00; font-weight:bold; font-size:11px;">⏳ Buscando...</span>
+                        <button class="futgg-btn danger" style="padding:2px 6px; font-size:10px;" data-action="stop-market-crawl" data-eaid="${eaId}">⏹️ Parar</button>
+                    </div>
+                `;
             } else if (market && market.listed) {
                 marketHtml = `<span style="color:#00ff88; font-weight:bold;">🚀 Listado a ${formatCoins(market.price)}</span>`;
             } else if (market && market.isExtinct) {
+                const extinctPrice = market.suggestedExtinctBin || market.lowestBin || State.customPrices[eaId] || roundToValidBid(Math.round(getItemMaxPrice(eaId, gem) * 0.90), 'down');
                 marketHtml = `
                     <div style="display:flex; align-items:center; gap:6px;">
-                        <span class="futgg-tag extinct" title="No hay cartas activas en el mercado">💎 ¡Extinta! (0 listadas)</span>
+                        <span class="futgg-tag extinct" style="background:rgba(239, 68, 68, 0.2); border:1px solid #ef4444; color:#fca5a5; font-weight:800;" title="No hay cartas activas en el mercado. Sugerimos vender al 90% del rango máx (${formatCoins(market.maxPrice || getItemMaxPrice(eaId, gem))}) para evitar baneos">💎 ¡Extinta! (90% máx: ${formatCoins(extinctPrice)})</span>
                         <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Reintentar">🔄</button>
                     </div>
                 `;
@@ -4445,16 +4687,18 @@
                     </div>
                 `;
             } else if (inTransfer) {
+                const isExtinct = market && market.isExtinct;
                 actionHtml = `
                     <div style="display:flex; gap:4px; align-items:center;">
-                        <button class="futgg-btn primary" style="padding:4px 10px; font-size:11px;" data-action="list" data-eaid="${eaId}" title="Listar en el mercado por el precio elegido">🚀 Listar</button>
+                        <button class="futgg-btn ${isExtinct ? '' : 'primary'}" style="padding:4px 10px; font-size:11px; ${isExtinct ? 'background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;' : ''}" data-action="list" data-eaid="${eaId}" title="${isExtinct ? `Listar carta extinta al 90% del máximo (${formatCoins(customPrice)})` : 'Listar en el mercado por el precio elegido'}">${isExtinct ? '💎 Listar (90%)' : '🚀 Listar'}</button>
                     </div>
                 `;
             } else if (inClub && isItemTradeable(inClub)) {
+                const isExtinct = market && market.isExtinct;
                 actionHtml = `
                     <div style="display:flex; gap:4px; align-items:center;">
                         <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
-                        <button class="futgg-btn primary" style="padding:4px 10px; font-size:11px;" data-action="list" data-eaid="${eaId}" title="Listar directamente en el mercado">🚀 Listar</button>
+                        <button class="futgg-btn ${isExtinct ? '' : 'primary'}" style="padding:4px 10px; font-size:11px; ${isExtinct ? 'background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;' : ''}" data-action="list" data-eaid="${eaId}" title="${isExtinct ? `Listar carta extinta al 90% del máximo (${formatCoins(customPrice)})` : 'Listar directamente en el mercado'}">${isExtinct ? '💎 Listar (90%)' : '🚀 Listar'}</button>
                     </div>
                 `;
             } else if (inClub && !isItemTradeable(inClub)) {
@@ -4708,9 +4952,10 @@
                     <button class="futgg-btn" style="padding:2px 6px; font-size:10px; margin-top:2px;" data-action="check-market" data-eaid="${eaId}">Reintentar</button>
                 `;
             } else if (market.isExtinct) {
+                const extinctPrice = market.suggestedExtinctBin || market.lowestBin || State.customPrices[eaId] || roundToValidBid(Math.round(getItemMaxPrice(eaId, p) * 0.90), 'down');
                 marketHtml = `
                     <div style="display:flex; align-items:center; gap:6px;">
-                        <span class="futgg-tag extinct" title="No hay cartas activas en el mercado">💎 ¡Extinta! (0 listadas)</span>
+                        <span class="futgg-tag extinct" style="background:rgba(239, 68, 68, 0.2); border:1px solid #ef4444; color:#fca5a5; font-weight:800;" title="No hay cartas activas en el mercado (0 listadas). Rango máx: ${formatCoins(market.maxPrice || getItemMaxPrice(eaId, p))}. Sugerimos listar al 90% para evitar baneo por venta al techo máximo.">💎 ¡Extinta! (90% máx: ${formatCoins(extinctPrice)})</span>
                         <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Reintentar">🔄</button>
                     </div>
                 `;
@@ -4798,16 +5043,32 @@
 
             // Columna Precio de Venta
             let priceColHtml = '';
-            const suggested = State.customPrices[eaId] || (market && market.lowestBin ? Math.max(200, market.lowestBin - CONFIG.undercutAmount) : 0);
+            let suggested = State.customPrices[eaId];
+            if (!suggested && market) {
+                if (market.isExtinct) {
+                    suggested = market.suggestedExtinctBin || roundToValidBid(Math.round(getItemMaxPrice(eaId, p) * 0.90), 'down');
+                    State.customPrices[eaId] = suggested;
+                } else if (market.lowestBin) {
+                    suggested = Math.max(200, (market.hasOutlier ? market.realisticBin : market.lowestBin) - CONFIG.undercutAmount);
+                }
+            }
+            if (!suggested && (p.estimatedPrice || p.futbinPrice)) {
+                suggested = p.estimatedPrice || p.futbinPrice;
+            }
+
             if (suggested > 0) {
                 const isMin = market ? isMinimumPrice(p, market) : false;
+                const isExtinct = market && market.isExtinct;
+                const borderStyle = isExtinct ? 'border:1px solid #ef4444; color:#fca5a5; font-weight:bold;' : (isMin ? 'border-color:#ffaa00; color:#ffaa00;' : '');
                 priceColHtml = `
                     <div style="display:flex; align-items:center; gap:2px;">
                         <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
-                        <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${suggested}" style="${isMin ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" />
+                        <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${suggested}" style="${borderStyle}" />
                         <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
                     </div>
-                    <div style="font-size:10px; color:#8fa0b5; margin-top:2px;">Puja: <b>${formatCoins(calculateStartBid(suggested))}</b></div>
+                    <div style="font-size:10px; color:${isExtinct ? '#fca5a5' : '#8fa0b5'}; margin-top:2px;">
+                        ${isExtinct ? '🛡️ 90% Máx | ' : ''}Puja: <b>${formatCoins(calculateStartBid(suggested))}</b>
+                    </div>
                 `;
             } else {
                 priceColHtml = `<span style="color:#64748b; font-size:11px;">Consultar mercado</span>`;
@@ -4816,10 +5077,15 @@
             // Columna Acciones
             let actionHtml = '';
             const isMin = market ? isMinimumPrice(p, market) : false;
+            const isExtinct = market && market.isExtinct;
             if (selling) {
                 actionHtml = `<span style="font-size:11px; color:#00ccff; font-weight:bold;">🚀 En venta</span>`;
             } else if (inTransfer) {
-                if (isMin) {
+                if (isExtinct) {
+                    actionHtml = `
+                        <button class="futgg-btn" style="padding:4px 10px; font-size:11px; background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;" data-action="list" data-eaid="${eaId}" title="Listar carta extinta al 90% del rango máximo (${formatCoins(suggested)})">💎 Listar (90%)</button>
+                    `;
+                } else if (isMin) {
                     actionHtml = `
                         <button class="futgg-btn" style="padding:4px 8px; font-size:10px; border-color:#ffaa00; color:#ffaa00;" data-action="list" data-eaid="${eaId}" title="⚠️ Carta a precio mínimo de descarte. Si la vendes no da beneficio.">⚠️ Mínimo</button>
                     `;
@@ -4829,7 +5095,14 @@
                     `;
                 }
             } else if (inClub && isItemTradeable(inClub)) {
-                if (isMin) {
+                if (isExtinct) {
+                    actionHtml = `
+                        <div style="display:flex; gap:4px;">
+                            <button class="futgg-btn" style="padding:3px 6px; font-size:10px;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
+                            <button class="futgg-btn" style="padding:3px 8px; font-size:10px; background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;" data-action="list" data-eaid="${eaId}" title="Listar carta extinta al 90% del rango máximo (${formatCoins(suggested)})">💎 Listar (90%)</button>
+                        </div>
+                    `;
+                } else if (isMin) {
                     actionHtml = `
                         <div style="display:flex; gap:4px;">
                             <button class="futgg-btn" style="padding:3px 6px; font-size:10px;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
@@ -4925,7 +5198,7 @@
             for (const m of mutations) {
                 for (const node of m.addedNodes) {
                     if (node.nodeType === 1) {
-                        const isDialog = (node.classList && (node.classList.contains('ea-dialog-view') || node.classList.contains('ut-click-shield') || node.classList.contains('dialog-view'))) ||
+                        const isDialog = (node.classList && (node.classList.contains('ea-dialog-view') || node.classList.contains('dialog-view'))) ||
                             (node.querySelector && node.querySelector('.ea-dialog-view, .dialog-view'));
                         if (isDialog) {
                             const text = (node.textContent || '').toLowerCase();
@@ -4957,10 +5230,9 @@
         }
     });
 
-    // Inicializar UI, listener de sincronización FUTBIN e interceptor de caché de mercado
+    // Inicializar UI y listener de sincronización FUTBIN
     setupPackOpeningListener();
     setupFutbinSbcSyncListener();
-    setupTransferMarketCacheBusterHook();
 
     window.addEventListener('load', () => {
         setTimeout(createUI, 2000);
