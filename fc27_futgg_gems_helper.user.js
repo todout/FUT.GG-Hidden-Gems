@@ -1,18 +1,23 @@
 // ==UserScript==
-// @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
+// @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.9.6
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: botón Sync Club con cooldown dinámico y tooltip, auto-sync en segundo plano sin notificaciones invasivas, barra en 1 línea y tabla ultra compacta.
+// @version      1.10.0
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción automática de cartas SBC (bronces y platas caros), verificación inteligente en vivo, detección de snipes y listador seguro.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.fut.gg/*
+// @match        https://www.futbin.com/*
+// @match        https://futbin.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_cookie
 // @connect      fut.gg
 // @connect      www.fut.gg
+// @connect      futbin.com
+// @connect      www.futbin.com
+// @connect      cdn3.futbin.com
 // @updateURL    https://raw.githubusercontent.com/todout/FUT.GG-Hidden-Gems/main/fc27_futgg_gems_helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/todout/FUT.GG-Hidden-Gems/main/fc27_futgg_gems_helper.user.js
 // @homepageURL  https://todout.github.io/FUT.GG-Hidden-Gems/
@@ -320,6 +325,401 @@
         setInterval(captureFutGgToken, 60000); // Chequeo suave cada 60s
         setInterval(checkAndClickFutGgSyncButton, 10000); // Auto-detección de Sync Club en fut.gg cada 10s
         return; // No ejecutar la UI de la Web App en la web de fut.gg
+    }
+
+    // =========================================================================
+    // SI ESTAMOS EN FUTBIN.COM: EXTRACCIÓN Y SINCRONIZACIÓN DE SOLUCIONES SBC
+    // =========================================================================
+    if (window.location.hostname.includes('futbin.com')) {
+        function initFutbinSbcModule() {
+            console.log("%c[FC 27 Helper] 🧩 Módulo FUTBIN SBC activo en:", "color:#00ff88; font-weight:bold;", window.location.href);
+
+            // Inyectar estilos para el widget flotante en FUTBIN
+            const style = document.createElement('style');
+            style.id = 'futbin-sbc-helper-styles';
+            style.innerHTML = `
+                #futbin-sbc-widget {
+                    position: fixed;
+                    bottom: 24px;
+                    right: 24px;
+                    z-index: 999999;
+                    background: linear-gradient(135deg, rgba(14, 22, 33, 0.98), rgba(20, 31, 46, 0.98));
+                    border: 2px solid #00ff88;
+                    border-radius: 14px;
+                    padding: 14px 18px;
+                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 255, 136, 0.35);
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    color: #ffffff;
+                    max-width: 380px;
+                    backdrop-filter: blur(12px);
+                    user-select: none;
+                    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+                #futbin-sbc-widget:hover {
+                    box-shadow: 0 12px 45px rgba(0, 0, 0, 0.9), 0 0 25px rgba(0, 255, 136, 0.5);
+                    border-color: #33ff9f;
+                }
+                .futbin-sbc-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                    margin-bottom: 10px;
+                }
+                .futbin-sbc-title {
+                    font-size: 13px;
+                    font-weight: 800;
+                    color: #00ff88;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .futbin-sbc-badge {
+                    background: rgba(0, 255, 136, 0.18);
+                    color: #00ff88;
+                    border: 1px solid #00ff88;
+                    border-radius: 6px;
+                    padding: 1px 6px;
+                    font-size: 10px;
+                    font-weight: 800;
+                }
+                .futbin-sbc-content {
+                    font-size: 12px;
+                    color: #cbd5e1;
+                    margin-bottom: 12px;
+                    line-height: 1.4;
+                }
+                .futbin-sbc-controls {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-bottom: 10px;
+                }
+                .futbin-sbc-select {
+                    background: #111a26;
+                    border: 1px solid #2d3f55;
+                    color: #fff;
+                    padding: 6px 10px;
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    outline: none;
+                }
+                .futbin-sbc-select:focus {
+                    border-color: #00ff88;
+                }
+                .futbin-sbc-btn {
+                    background: #00ff88;
+                    color: #0c1218;
+                    border: 1px solid #00ff88;
+                    padding: 8px 14px;
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-weight: 800;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    transition: all 0.2s;
+                    text-decoration: none;
+                }
+                .futbin-sbc-btn:hover {
+                    background: #2aff9f;
+                    box-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+                    transform: translateY(-1px);
+                }
+                .futbin-sbc-btn:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                    transform: none;
+                    box-shadow: none;
+                }
+                .futbin-sbc-btn.secondary {
+                    background: #1b2636;
+                    color: #00ccff;
+                    border-color: #00ccff;
+                }
+                .futbin-sbc-btn.secondary:hover {
+                    background: #24354c;
+                    box-shadow: 0 0 12px rgba(0, 204, 255, 0.4);
+                }
+                .futbin-sbc-progress {
+                    margin-top: 8px;
+                    font-size: 11px;
+                    color: #ffaa00;
+                    font-weight: 600;
+                    display: none;
+                }
+            `;
+            document.head.appendChild(style);
+
+            const isChallengePage = window.location.pathname.includes('/squad-building-challenges/Challenges/');
+            const isIndividualSquad = /\/27\/squad\/\d+\/sbc/.test(window.location.pathname);
+
+            if (!isChallengePage && !isIndividualSquad) {
+                return;
+            }
+
+            function getChallengeTitle() {
+                if (isIndividualSquad) {
+                    const breadcrumb = document.querySelector('.breadcrumb, .sbc-title, h1');
+                    return (breadcrumb && breadcrumb.textContent.trim()) || document.title.replace('| FUTBIN', '').trim();
+                }
+                const h1 = document.querySelector('h1, .challenge-name, .sbc-header-title');
+                if (h1 && h1.textContent.trim()) {
+                    return h1.textContent.replace(/sbc/i, '').trim();
+                }
+                const docTitle = document.title || '';
+                const match = docTitle.match(/CHALLENGES\s*-\s*([^|]+)/i) || docTitle.match(/([^|]+)\|\s*FUTBIN/i);
+                return (match && match[1].trim()) || 'SBC Challenge';
+            }
+
+            function getSolutionUrls(limit = 5) {
+                if (isIndividualSquad) {
+                    return [window.location.href];
+                }
+                const allLinks = Array.from(document.querySelectorAll('a[href*="/27/squad/"][href*="/sbc"], a[href*="/27/squad/"]'))
+                    .map(a => a.href)
+                    .filter(href => /\/27\/squad\/\d+/.test(href));
+
+                const uniqueUrls = [];
+                for (const rawUrl of allLinks) {
+                    const cleanUrl = rawUrl.split('?')[0].split('#')[0];
+                    const sbcUrl = cleanUrl.endsWith('/sbc') ? cleanUrl : cleanUrl + '/sbc';
+                    if (!uniqueUrls.includes(sbcUrl)) {
+                        uniqueUrls.push(sbcUrl);
+                    }
+                }
+                return uniqueUrls.slice(0, limit);
+            }
+
+            function parsePlayersFromSquadDoc(doc, squadIndex = 1) {
+                const players = [];
+                const cardContainers = Array.from(doc.querySelectorAll('.player-draggable, .playercard-field, a[href*="/27/player/"]'));
+                const seenInThisSquad = new Set();
+
+                for (const el of cardContainers) {
+                    const img = el.querySelector('img[src*="/players/"]') || (el.tagName === 'IMG' && el.src.includes('/players/') ? el : null);
+                    let eaId = null;
+                    if (img && img.src) {
+                        const match = img.src.match(/\/players\/(\d+)\.png/i);
+                        if (match) eaId = Number(match[1]);
+                    }
+
+                    if (!eaId) {
+                        const link = el.closest('a[href*="/27/player/"]') || el.querySelector('a[href*="/27/player/"]');
+                        if (link && link.href) {
+                            const mLink = link.href.match(/\/27\/player\/(\d+)/i);
+                            if (mLink) eaId = Number(mLink[1]);
+                        }
+                    }
+
+                    if (!eaId || seenInThisSquad.has(eaId)) continue;
+                    seenInThisSquad.add(eaId);
+
+                    const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
+                    let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
+
+                    const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
+                    let rating = 0;
+                    if (ratingEl) {
+                        const rMatch = ratingEl.textContent.match(/\d+/);
+                        if (rMatch) rating = parseInt(rMatch[0], 10);
+                    }
+
+                    const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
+                    const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
+
+                    const priceEl = el.querySelector('.price-segment, .player-price, .price');
+                    let futbinPrice = 0;
+                    if (priceEl) {
+                        const pText = priceEl.textContent.replace(/,/g, '').replace(/🪙/g, '').trim();
+                        const pMatch = pText.match(/(\d+(\.\d+)?[kKmM]?)/);
+                        if (pMatch) {
+                            const rawVal = pMatch[1].toLowerCase();
+                            if (rawVal.endsWith('k')) futbinPrice = Math.round(parseFloat(rawVal) * 1000);
+                            else if (rawVal.endsWith('m')) futbinPrice = Math.round(parseFloat(rawVal) * 1000000);
+                            else futbinPrice = parseInt(rawVal, 10);
+                        }
+                    }
+
+                    let quality = 'gold';
+                    if (rating > 0) {
+                        if (rating <= 64) quality = 'bronze';
+                        else if (rating <= 74) quality = 'silver';
+                        else quality = 'gold';
+                    }
+
+                    players.push({
+                        eaId: eaId,
+                        name: name || `Jugador #${eaId}`,
+                        rating: rating,
+                        position: position,
+                        quality: quality,
+                        futbinPrice: futbinPrice,
+                        squadIndex: squadIndex
+                    });
+                }
+
+                return players;
+            }
+
+            const challengeTitle = getChallengeTitle();
+            const widget = document.createElement('div');
+            widget.id = 'futbin-sbc-widget';
+            widget.innerHTML = `
+                <div class="futbin-sbc-header">
+                    <div class="futbin-sbc-title">
+                        <span>🧩 FC 27 SBC Helper</span>
+                        <span class="futbin-sbc-badge">Web App Sync</span>
+                    </div>
+                    <button id="futbin-sbc-close-btn" style="background:transparent; border:none; color:#8fa0b5; cursor:pointer; font-size:16px;">&times;</button>
+                </div>
+                <div class="futbin-sbc-content">
+                    SBC: <b style="color:#00ff88;">${challengeTitle}</b><br/>
+                    <span style="font-size:11px; color:#8fa0b5;">Extrae jugadores requeridos (bronces y platas caros) y envíalos a la Web App para buscar en tu club.</span>
+                </div>
+                <div class="futbin-sbc-controls">
+                    ${!isIndividualSquad ? `
+                        <label style="font-size:11px; color:#8fa0b5;">Top:</label>
+                        <select id="futbin-sbc-count-select" class="futbin-sbc-select">
+                            <option value="1">1 Solución</option>
+                            <option value="3">3 Soluciones</option>
+                            <option value="5" selected>5 Soluciones (Default)</option>
+                            <option value="10">10 Soluciones</option>
+                        </select>
+                    ` : ''}
+                    <button class="futbin-sbc-btn" id="futbin-sbc-sync-btn">
+                        <span>⚡ Enviar a Web App</span>
+                    </button>
+                </div>
+                <div id="futbin-sbc-progress" class="futbin-sbc-progress">Analizando soluciones...</div>
+                <div id="futbin-sbc-result" style="display:none; margin-top:8px; font-size:11px; color:#00ff88; line-height:1.4;"></div>
+            `;
+            document.body.appendChild(widget);
+
+            document.getElementById('futbin-sbc-close-btn').addEventListener('click', () => widget.remove());
+
+            const syncBtn = document.getElementById('futbin-sbc-sync-btn');
+            const progressEl = document.getElementById('futbin-sbc-progress');
+            const resultEl = document.getElementById('futbin-sbc-result');
+            const countSelect = document.getElementById('futbin-sbc-count-select');
+
+            syncBtn.addEventListener('click', async () => {
+                const count = countSelect ? parseInt(countSelect.value, 10) : 1;
+                syncBtn.disabled = true;
+                progressEl.style.display = 'block';
+                resultEl.style.display = 'none';
+
+                try {
+                    const solutionUrls = getSolutionUrls(count);
+                    if (solutionUrls.length === 0) {
+                        throw new Error("No se encontraron soluciones en esta página.");
+                    }
+
+                    progressEl.textContent = `Analizando 0/${solutionUrls.length} soluciones...`;
+                    const playerMap = new Map();
+                    const parser = new DOMParser();
+
+                    for (let i = 0; i < solutionUrls.length; i++) {
+                        const url = solutionUrls[i];
+                        progressEl.textContent = `Descargando solución ${i + 1}/${solutionUrls.length}...`;
+
+                        let doc = null;
+                        if (isIndividualSquad && i === 0) {
+                            doc = document;
+                        } else {
+                            const resp = await fetch(url, { credentials: 'include' });
+                            if (!resp.ok) {
+                                console.warn(`[FUTBIN SBC Helper] HTTP ${resp.status} al descargar solución: ${url}`);
+                                continue;
+                            }
+                            const html = await resp.text();
+                            doc = parser.parseFromString(html, 'text/html');
+                        }
+
+                        const squadPlayers = parsePlayersFromSquadDoc(doc, i + 1);
+                        for (const p of squadPlayers) {
+                            if (!playerMap.has(p.eaId)) {
+                                playerMap.set(p.eaId, {
+                                    eaId: p.eaId,
+                                    name: p.name,
+                                    rating: p.rating,
+                                    position: p.position,
+                                    quality: p.quality,
+                                    futbinPrice: p.futbinPrice,
+                                    estimatedPrice: p.futbinPrice || (p.quality === 'bronze' ? 1500 : (p.quality === 'silver' ? 2200 : 3500)),
+                                    frequency: 1,
+                                    solutions: [i + 1],
+                                    squadUrl: url
+                                });
+                            } else {
+                                const existing = playerMap.get(p.eaId);
+                                existing.frequency += 1;
+                                if (!existing.solutions.includes(i + 1)) {
+                                    existing.solutions.push(i + 1);
+                                }
+                                if (p.futbinPrice > 0 && (!existing.futbinPrice || p.futbinPrice > existing.futbinPrice)) {
+                                    existing.futbinPrice = p.futbinPrice;
+                                    existing.estimatedPrice = p.futbinPrice;
+                                }
+                            }
+                        }
+
+                        if (i < solutionUrls.length - 1) {
+                            await new Promise(r => setTimeout(r, 400));
+                        }
+                    }
+
+                    const aggregatedPlayers = Array.from(playerMap.values());
+                    aggregatedPlayers.sort((a, b) => {
+                        if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+                        const qPrio = { 'bronze': 1, 'silver': 2, 'gold': 3 };
+                        const qA = qPrio[a.quality] || 4;
+                        const qB = qPrio[b.quality] || 4;
+                        if (qA !== qB) return qA - qB;
+                        return a.rating - b.rating;
+                    });
+
+                    const payload = {
+                        challengeTitle: challengeTitle,
+                        challengeUrl: window.location.href,
+                        solutionCount: count,
+                        totalSolutionsFound: solutionUrls.length,
+                        players: aggregatedPlayers,
+                        updatedAt: Date.now()
+                    };
+
+                    GM_setValue('futbin_sbc_data', payload);
+                    console.log("%c[FC 27 Helper] 💾 Soluciones SBC sincronizadas con éxito:", "color:#00ff88; font-weight:bold;", payload);
+
+                    progressEl.style.display = 'none';
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = `
+                        ✅ <b>¡${aggregatedPlayers.length} jugadores extraídos!</b><br/>
+                        Analizadas <b>${solutionUrls.length} soluciones</b>.<br/>
+                        <a href="https://www.ea.com/ea-sports-fc/ultimate-team/web-app/" target="_blank" class="futbin-sbc-btn secondary" style="display:inline-flex; margin-top:8px; padding:5px 10px; font-size:11px;">
+                            🚀 Abrir EA Web App & Buscar
+                        </a>
+                    `;
+                } catch (err) {
+                    console.error("[FUTBIN SBC Helper] Error:", err);
+                    progressEl.style.display = 'none';
+                    resultEl.style.display = 'block';
+                    resultEl.style.color = '#ff4444';
+                    resultEl.textContent = `❌ Error: ${err.message}`;
+                } finally {
+                    syncBtn.disabled = false;
+                }
+            });
+        }
+
+        window.addEventListener('load', () => setTimeout(initFutbinSbcModule, 1000));
+        setTimeout(initFutbinSbcModule, 1500);
+        return; // No ejecutar la UI de la Web App en la web de futbin.com
     }
 
     console.log("%c[FUT.GG Gems Helper FC 27] Cargando en EA Web App...", "color: #00ff88; font-weight: bold; font-size: 14px;");
@@ -682,6 +1082,12 @@
     const State = {
         isOpen: false,
         lastScanTimestamp: 0,
+        activeTab: 'futgg',    // 'futgg' | 'futbin'
+        futbinSbcData: null,   // Datos de soluciones SBC cargadas de FUTBIN
+        futbinFilterOnlyBronzeSilver: true, // Filtro prioritario: sólo bronces y platas
+        futbinFilterOnlyInClub: true, // Filtro prioritario: sólo los que están en el club o transferibles
+        futbinFilterHideMinimum: true, // Filtro: ocultar cartas que están a precio mínimo de descarte
+        futbinSolutionsCount: 5, // Cantidad de soluciones analizadas por defecto (5)
         gems: [],              // Lista de cartas de FUT.GG
         clubMatches: {},       // eaId -> ItemData del club
         transferMatches: {},   // eaId -> ItemData de la lista de transferibles (sin listar)
@@ -702,6 +1108,59 @@
         autoSyncTimer: null,
         syncCountdownInterval: null
     };
+
+    try {
+        State.futbinSbcData = GM_getValue('futbin_sbc_data', null);
+    } catch (e) { }
+
+    function isMinimumPrice(player, market) {
+        if (!market || !market.lowestBin) return false;
+        const bin = market.hasOutlier ? market.realisticBin : market.lowestBin;
+        const quality = player.quality || (player.rating && player.rating <= 64 ? 'bronze' : (player.rating && player.rating <= 74 ? 'silver' : 'gold'));
+        if (quality === 'bronze' || (player.rating && player.rating <= 64)) {
+            return bin <= 250;
+        }
+        if (quality === 'silver' || (player.rating && player.rating >= 65 && player.rating <= 74)) {
+            return bin <= 350;
+        }
+        return bin <= 500;
+    }
+
+    function isInflatedGem(player, market) {
+        if (!market || !market.lowestBin) return false;
+        const bin = market.hasOutlier ? market.realisticBin : market.lowestBin;
+        const quality = player.quality || (player.rating && player.rating <= 64 ? 'bronze' : (player.rating && player.rating <= 74 ? 'silver' : 'gold'));
+        if (quality === 'bronze' || (player.rating && player.rating <= 64)) {
+            return bin >= 850;
+        }
+        if (quality === 'silver' || (player.rating && player.rating >= 65 && player.rating <= 74)) {
+            return bin >= 1200;
+        }
+        return bin >= 2500;
+    }
+
+    function findAnyPlayerById(id) {
+        if (!id) return null;
+        const strId = String(id);
+        if (State.activeTab === 'futbin' && State.futbinSbcData && State.futbinSbcData.players) {
+            const p = State.futbinSbcData.players.find(x => String(x.eaId) === strId);
+            if (p) return p;
+        }
+        const gem = State.gems.find(g => String(g.eaId) === strId);
+        if (gem) return gem;
+        if (State.futbinSbcData && State.futbinSbcData.players) {
+            return State.futbinSbcData.players.find(x => String(x.eaId) === strId) || null;
+        }
+        return null;
+    }
+
+    function renderCurrentTable() {
+        if (State.activeTab === 'futbin') {
+            renderFutbinSbcTable();
+        } else {
+            renderGemsTable();
+        }
+    }
 
     // =========================================================================
     // BÚSQUEDA Y MANIPULACIÓN DE CARTAS
@@ -1556,6 +2015,345 @@
     }
 
     // =========================================================================
+    // FUNCIONES DE PROCESAMIENTO Y FILTRADO DE SOLUCIONES FUTBIN SBC
+    // =========================================================================
+    function getFilteredFutbinPlayers() {
+        if (!State.futbinSbcData || !State.futbinSbcData.players) return [];
+        return State.futbinSbcData.players.filter(p => {
+            const eaId = Number(p.eaId);
+            // 1. Filtro Bronces/Platas prioritario
+            if (State.futbinFilterOnlyBronzeSilver) {
+                if (p.quality !== 'bronze' && p.quality !== 'silver') return false;
+            }
+            // 2. Filtro En Mi Club prioritario
+            if (State.futbinFilterOnlyInClub) {
+                const inClub = State.clubMatches[eaId];
+                const inTransfer = State.transferMatches[eaId];
+                const selling = State.sellingMatches[eaId];
+                const sold = State.soldMatches[eaId];
+                if (!inClub && !inTransfer && !selling && !sold) return false;
+            }
+            // 3. Filtro Ocultar Precio Mínimo (si ya fue consultado y está a descarte)
+            if (State.futbinFilterHideMinimum) {
+                const market = State.marketPrices[eaId];
+                if (market && !market.error && !market.loading && isMinimumPrice(p, market)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
+    function updateFutbinTabBadge() {
+        const badge = document.getElementById('futbin-tab-badge');
+        if (!badge) return;
+        if (!State.futbinSbcData || !State.futbinSbcData.players) {
+            badge.textContent = '0';
+            return;
+        }
+        let availableCount = 0;
+        for (const p of State.futbinSbcData.players) {
+            const eaId = Number(p.eaId);
+            const inClub = State.clubMatches[eaId];
+            const inTransfer = State.transferMatches[eaId];
+            const selling = State.sellingMatches[eaId];
+            const sold = State.soldMatches[eaId];
+            if (!sold && !selling) {
+                if (inTransfer || (inClub && isItemTradeable(inClub))) {
+                    availableCount++;
+                }
+            }
+        }
+        badge.textContent = availableCount;
+    }
+
+    function switchTab(tab) {
+        State.activeTab = tab;
+        const tabFutgg = document.getElementById('futgg-tab-futgg');
+        const tabFutbin = document.getElementById('futgg-tab-futbin');
+        const tbFutgg = document.getElementById('futgg-toolbar');
+        const tbFutbin = document.getElementById('futbin-sbc-toolbar');
+        const hideSoldContainer = document.getElementById('futgg-hide-sold-container');
+        const tokenBtn = document.getElementById('futgg-toggle-token-btn');
+
+        if (tab === 'futgg') {
+            if (tabFutgg) tabFutgg.classList.add('active');
+            if (tabFutbin) tabFutbin.classList.remove('active');
+            if (tbFutgg) tbFutgg.style.display = 'flex';
+            if (tbFutbin) tbFutbin.style.display = 'none';
+            if (hideSoldContainer) hideSoldContainer.style.display = 'inline-flex';
+            if (tokenBtn) tokenBtn.style.display = 'inline-flex';
+            renderGemsTable();
+        } else {
+            if (tabFutgg) tabFutgg.classList.remove('active');
+            if (tabFutbin) tabFutbin.classList.add('active');
+            if (tbFutgg) tbFutgg.style.display = 'none';
+            if (tbFutbin) tbFutbin.style.display = 'flex';
+            if (hideSoldContainer) hideSoldContainer.style.display = 'none';
+            if (tokenBtn) tokenBtn.style.display = 'none';
+            try {
+                const latestSbc = GM_getValue('futbin_sbc_data', null);
+                if (latestSbc) State.futbinSbcData = latestSbc;
+            } catch (e) { }
+            renderFutbinSbcTable();
+        }
+    }
+
+    async function scanClubForFutbinPlayers() {
+        if (!State.futbinSbcData || !State.futbinSbcData.players) {
+            notificar("No hay soluciones SBC de FUTBIN cargadas.", "#ffaa00");
+            return;
+        }
+        notificar("🔍 Buscando jugadores del SBC en tu Club y Transferibles...", "#00ccff");
+        let found = 0;
+        for (const p of State.futbinSbcData.players) {
+            const item = await findCardInAccount(p);
+            if (item) found++;
+        }
+        updateFutbinTabBadge();
+        renderFutbinSbcTable();
+        notificar(`✅ Búsqueda completada: ${found} jugadores de soluciones encontrados en tu cuenta`, "#00ff88");
+    }
+
+    async function batchCheckFutbinMarketPrices() {
+        if (State.isBatchRunning) return;
+        if (!State.futbinSbcData || !State.futbinSbcData.players) return;
+
+        const playersToCheck = getFilteredFutbinPlayers();
+        if (playersToCheck.length === 0) {
+            notificar("No hay jugadores que coincidan con los filtros para consultar.", "#ffaa00");
+            return;
+        }
+
+        State.isBatchRunning = true;
+        renderBatchControls();
+
+        let count = 0;
+        for (const p of playersToCheck) {
+            if (!State.isBatchRunning) break;
+            count++;
+            updateBatchStatus(`SBC (${count}/${playersToCheck.length}): Verificando ${p.name}...`);
+            try {
+                await checkMarketPrice(p, true);
+            } catch (e) {
+                console.error("Error en batch FUTBIN check:", e);
+                break;
+            }
+        }
+
+        State.isBatchRunning = false;
+        updateBatchStatus("Comparación de mercado SBC completada.");
+        renderBatchControls();
+        renderFutbinSbcTable();
+    }
+
+    async function batchListFutbinProfitable() {
+        if (State.isBatchRunning) return;
+        if (!State.futbinSbcData || !State.futbinSbcData.players) return;
+
+        const candidates = getFilteredFutbinPlayers().filter(p => {
+            const eaId = Number(p.eaId);
+            if (State.sellingMatches[eaId] || State.soldMatches[eaId]) return false;
+            const inTransfer = State.transferMatches[eaId];
+            const inClub = State.clubMatches[eaId];
+            const isAvailable = inTransfer || (inClub && isItemTradeable(inClub));
+            if (!isAvailable) return false;
+
+            const market = State.marketPrices[eaId];
+            if (!market || market.error || market.loading) return false;
+
+            // Filtro clave: no listar si está a precio mínimo
+            if (isMinimumPrice(p, market)) return false;
+
+            return true;
+        });
+
+        if (candidates.length === 0) {
+            notificar("No hay jugadores del SBC rentables listos para vender (o están a precio mínimo).", "#ffaa00");
+            return;
+        }
+
+        State.isBatchRunning = true;
+        renderBatchControls();
+
+        let count = 0;
+        for (const p of candidates) {
+            if (!State.isBatchRunning) break;
+            count++;
+            const price = State.customPrices[p.eaId] || (State.marketPrices[p.eaId] ? Math.max(200, State.marketPrices[p.eaId].lowestBin - CONFIG.undercutAmount) : 0);
+            updateBatchStatus(`Listando ${count}/${candidates.length}: ${p.name} por ${formatCoins(price)}...`);
+
+            await listCardOnMarket(p, price);
+            await randomDelay(CONFIG.listDelay, CONFIG.listDelay + 1000);
+        }
+
+        State.isBatchRunning = false;
+        updateBatchStatus(`¡Listo! Se listaron ${count} cartas rentables del SBC.`);
+        renderBatchControls();
+        renderFutbinSbcTable();
+    }
+
+    async function fetchFutbinSbcDirectly(rawUrl, solutionCount = 5) {
+        if (!rawUrl) {
+            notificar("Ingresa una URL o ID de desafío de FUTBIN", "#ffaa00");
+            return;
+        }
+
+        let cleanUrl = rawUrl.trim();
+        if (/^\d+$/.test(cleanUrl)) {
+            cleanUrl = `https://www.futbin.com/27/squad-building-challenges/Challenges/${cleanUrl}`;
+        } else if (!cleanUrl.startsWith('http')) {
+            cleanUrl = `https://www.futbin.com${cleanUrl.startsWith('/') ? '' : '/'}${cleanUrl}`;
+        }
+
+        notificar(`Conectando con FUTBIN para analizar ${solutionCount} soluciones...`, "#00ccff");
+
+        try {
+            const challengeHtml = await new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: cleanUrl,
+                    onload: (res) => {
+                        if (res.status >= 200 && res.status < 300) resolve(res.responseText);
+                        else reject(new Error(`HTTP ${res.status} al conectar con FUTBIN`));
+                    },
+                    onerror: reject
+                });
+            });
+
+            const parser = new DOMParser();
+            const challengeDoc = parser.parseFromString(challengeHtml, 'text/html');
+
+            const h1 = challengeDoc.querySelector('h1, .challenge-name, .sbc-header-title');
+            const title = (h1 && h1.textContent.trim().replace(/sbc/i, '').trim()) || 'SBC Challenge';
+
+            const links = Array.from(challengeDoc.querySelectorAll('a[href*="/27/squad/"][href*="/sbc"], a[href*="/27/squad/"]'))
+                .map(a => a.getAttribute('href') || '')
+                .filter(href => /\/27\/squad\/\d+/.test(href));
+
+            const uniqueSquadUrls = [];
+            for (const raw of links) {
+                let full = raw.startsWith('http') ? raw : `https://www.futbin.com${raw.startsWith('/') ? '' : '/'}${raw}`;
+                full = full.split('?')[0].split('#')[0];
+                const sbcUrl = full.endsWith('/sbc') ? full : full + '/sbc';
+                if (!uniqueSquadUrls.includes(sbcUrl)) uniqueSquadUrls.push(sbcUrl);
+            }
+
+            const targetUrls = uniqueSquadUrls.slice(0, solutionCount);
+            if (targetUrls.length === 0) {
+                throw new Error("No se encontraron soluciones en esta página de FUTBIN.");
+            }
+
+            const playerMap = new Map();
+            for (let i = 0; i < targetUrls.length; i++) {
+                notificar(`Descargando solución ${i + 1}/${targetUrls.length}...`, "#00ccff");
+                const squadHtml = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: targetUrls[i],
+                        onload: (res) => {
+                            if (res.status >= 200 && res.status < 300) resolve(res.responseText);
+                            else reject(new Error(`HTTP ${res.status}`));
+                        },
+                        onerror: reject
+                    });
+                });
+
+                const squadDoc = parser.parseFromString(squadHtml, 'text/html');
+                const cardContainers = Array.from(squadDoc.querySelectorAll('.player-draggable, .playercard-field, a[href*="/27/player/"]'));
+                const seenInSquad = new Set();
+
+                for (const el of cardContainers) {
+                    const img = el.querySelector('img[src*="/players/"]') || (el.tagName === 'IMG' && el.src.includes('/players/') ? el : null);
+                    let eaId = null;
+                    if (img && img.src) {
+                        const match = img.src.match(/\/players\/(\d+)\.png/i);
+                        if (match) eaId = Number(match[1]);
+                    }
+                    if (!eaId) {
+                        const link = el.closest('a[href*="/27/player/"]') || el.querySelector('a[href*="/27/player/"]');
+                        if (link && link.href) {
+                            const mLink = link.href.match(/\/27\/player\/(\d+)/i);
+                            if (mLink) eaId = Number(mLink[1]);
+                        }
+                    }
+                    if (!eaId || seenInSquad.has(eaId)) continue;
+                    seenInSquad.add(eaId);
+
+                    const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
+                    let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
+
+                    const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
+                    let rating = 0;
+                    if (ratingEl) {
+                        const rMatch = ratingEl.textContent.match(/\d+/);
+                        if (rMatch) rating = parseInt(rMatch[0], 10);
+                    }
+
+                    const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
+                    const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
+
+                    let quality = 'gold';
+                    if (rating > 0) {
+                        if (rating <= 64) quality = 'bronze';
+                        else if (rating <= 74) quality = 'silver';
+                        else quality = 'gold';
+                    }
+
+                    if (!playerMap.has(eaId)) {
+                        playerMap.set(eaId, {
+                            eaId: eaId,
+                            name: name || `Jugador #${eaId}`,
+                            rating: rating,
+                            position: position,
+                            quality: quality,
+                            frequency: 1,
+                            solutions: [i + 1],
+                            futbinPrice: 0,
+                            estimatedPrice: (quality === 'bronze' ? 1500 : (quality === 'silver' ? 2200 : 3500)),
+                            squadUrl: targetUrls[i]
+                        });
+                    } else {
+                        const ex = playerMap.get(eaId);
+                        ex.frequency += 1;
+                        if (!ex.solutions.includes(i + 1)) ex.solutions.push(i + 1);
+                    }
+                }
+
+                await randomDelay(400, 800);
+            }
+
+            const aggregated = Array.from(playerMap.values()).sort((a, b) => {
+                if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+                const qPrio = { 'bronze': 1, 'silver': 2, 'gold': 3 };
+                const qA = qPrio[a.quality] || 4;
+                const qB = qPrio[b.quality] || 4;
+                if (qA !== qB) return qA - qB;
+                return a.rating - b.rating;
+            });
+
+            const sbcData = {
+                challengeTitle: title,
+                challengeUrl: cleanUrl,
+                solutionCount: solutionCount,
+                totalSolutionsFound: targetUrls.length,
+                players: aggregated,
+                updatedAt: Date.now()
+            };
+
+            State.futbinSbcData = sbcData;
+            GM_setValue('futbin_sbc_data', sbcData);
+
+            notificar(`🟢 ¡${aggregated.length} jugadores cargados del SBC ${title}!`, "#00ff88");
+            renderFutbinSbcTable();
+            scanClubForFutbinPlayers();
+        } catch (err) {
+            console.error("[FUTBIN Helper] Error al descargar SBC:", err);
+            notificar(`Error al descargar SBC de FUTBIN: ${err.message}`, "#ff4444");
+        }
+    }
+
+    // =========================================================================
     // INTERFAZ DE USUARIO (UI / HUD MODERNO)
     // =========================================================================
     function injectUIStyles() {
@@ -2030,6 +2828,89 @@
                 border-top: 1px solid #00ccff !important;
                 border-bottom: 1px solid #00ccff !important;
                 transition: background 1.5s ease;
+            }
+
+            /* PESTAÑAS DEL HEADER */
+            .futgg-tab-bar {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                background: #0d1520;
+                padding: 3px;
+                border-radius: 10px;
+                border: 1px solid #223348;
+            }
+            .futgg-tab-btn {
+                background: transparent;
+                border: none;
+                color: #8fa0b5;
+                padding: 6px 14px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 700;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                transition: all 0.2s;
+            }
+            .futgg-tab-btn:hover {
+                color: #ffffff;
+                background: rgba(255, 255, 255, 0.05);
+            }
+            .futgg-tab-btn.active {
+                background: #1f2e42;
+                color: #00ff88;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            }
+            .futgg-tab-badge {
+                background: #00ff88;
+                color: #0c1218;
+                border-radius: 10px;
+                padding: 1px 6px;
+                font-size: 10px;
+                font-weight: 800;
+            }
+            .futgg-quality-badge {
+                font-size: 9px;
+                font-weight: 800;
+                padding: 2px 6px;
+                border-radius: 4px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            .futgg-quality-badge.bronze {
+                background: rgba(205, 127, 50, 0.2);
+                color: #cd7f32;
+                border: 1px solid #cd7f32;
+            }
+            .futgg-quality-badge.silver {
+                background: rgba(192, 192, 192, 0.2);
+                color: #e2e8f0;
+                border: 1px solid #a0aec0;
+            }
+            .futgg-quality-badge.gold {
+                background: rgba(255, 215, 0, 0.2);
+                color: #ffd700;
+                border: 1px solid #ffd700;
+            }
+            .futgg-frequency-badge {
+                background: rgba(255, 102, 0, 0.18);
+                color: #ff7733;
+                border: 1px solid #ff5500;
+                border-radius: 6px;
+                padding: 2px 7px;
+                font-size: 11px;
+                font-weight: 800;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+            }
+            .futgg-frequency-badge.hot {
+                background: rgba(255, 68, 68, 0.22);
+                color: #ff4444;
+                border-color: #ff3333;
+                box-shadow: 0 0 10px rgba(255, 68, 68, 0.35);
             }
         `;
         document.head.appendChild(style);
@@ -2511,9 +3392,14 @@
         panel.classList.add('hidden');
         panel.innerHTML = `
             <div class="futgg-header">
-                <h2>💎 Joyas Ocultas de FUT.GG & Auto-Listador</h2>
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <div class="futgg-tab-bar">
+                        <button class="futgg-tab-btn active" id="futgg-tab-futgg">💎 FUT.GG Hidden Gems (<span id="futgg-tab-badge">0</span>)</button>
+                        <button class="futgg-tab-btn" id="futgg-tab-futbin">🧩 FUTBIN SBC Gems (<span id="futbin-tab-badge">0</span>)</button>
+                    </div>
+                </div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <label style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; cursor:pointer; background:#162232; border:1px solid #23344a; padding:4px 10px; border-radius:6px; user-select:none;" title="Ocultar jugadores que ya no tienes en tu club o que ya fueron vendidos">
+                    <label id="futgg-hide-sold-container" style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; cursor:pointer; background:#162232; border:1px solid #23344a; padding:4px 10px; border-radius:6px; user-select:none;" title="Ocultar jugadores que ya no tienes en tu club o que ya fueron vendidos">
                         <input type="checkbox" id="futgg-hide-sold-toggle" checked style="cursor:pointer; accent-color:#00ff88;" />
                         <span>Ocultar vendidas / fuera de club (<b id="futgg-hidden-count" style="color:#00ff88;">0</b>)</span>
                     </label>
@@ -2521,7 +3407,9 @@
                     <button class="futgg-close-btn" id="futgg-close-btn" title="Cerrar">&times;</button>
                 </div>
             </div>
-            <div class="futgg-toolbar">
+
+            <!-- Toolbar para FUT.GG -->
+            <div id="futgg-toolbar" class="futgg-toolbar">
                 <!-- Grupo Sincronización -->
                 <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
                     <span style="font-size:10px; font-weight:700; color:#8fa0b5; text-transform:uppercase; margin-right:2px; letter-spacing:0.5px;">Sync:</span>
@@ -2542,6 +3430,51 @@
                     <button class="futgg-btn" id="futgg-batch-move-btn" style="padding:5px 10px; font-size:11px;" title="Mueve todas las joyas que tienes en el club a tu Lista de Transferibles">📥 Mover Todas</button>
                     <button class="futgg-btn" id="futgg-batch-check-btn" style="padding:5px 10px; font-size:11px;" title="Revisa el precio de mercado de todas las cartas de forma inteligente y segura (Tecla V)">📊 Chequear Mercado</button>
                     <button class="futgg-btn" id="futgg-batch-list-btn" style="padding:5px 10px; font-size:11px; border-color:#00ff88; color:#00ff88; font-weight:700;" title="Pone a la venta en el mercado las cartas revisadas">🚀 Listar Todas</button>
+                </div>
+            </div>
+
+            <!-- Toolbar para Soluciones SBC de FUTBIN -->
+            <div id="futbin-sbc-toolbar" class="futgg-toolbar" style="display:none; flex-wrap:wrap; gap:8px; justify-content:space-between;">
+                <!-- Desafío Activo y Link -->
+                <div style="display:flex; align-items:center; gap:6px; background:#162232; padding:4px 8px; border-radius:8px; border:1px solid #23344a;">
+                    <span style="font-size:10px; font-weight:800; color:#00ff88; text-transform:uppercase;">🏆 SBC:</span>
+                    <span id="futbin-sbc-active-title" style="font-size:11px; font-weight:700; color:#fff; max-width:180px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Ninguno cargado</span>
+                    <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:2px 7px; font-size:10px;" title="Recargar datos enviados desde la web de FUTBIN">📥 Recargar</button>
+                </div>
+
+                <!-- Analizar SBC desde URL de FUTBIN -->
+                <div style="display:flex; align-items:center; gap:4px; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
+                    <input type="text" id="futbin-sbc-url-input" placeholder="URL o ID de Desafío FUTBIN" style="width:200px; background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px;" />
+                    <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
+                        <option value="1">1 Sol.</option>
+                        <option value="3">3 Sol.</option>
+                        <option value="5" selected>5 Sol. (Default)</option>
+                        <option value="10">10 Sol.</option>
+                    </select>
+                    <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:4px 10px; font-size:11px;" title="Descargar y analizar soluciones de este desafío">⚡ Analizar</button>
+                </div>
+
+                <!-- Filtros requeridos por el usuario -->
+                <div style="display:flex; align-items:center; gap:8px; background:#162232; padding:4px 8px; border-radius:8px; border:1px solid #23344a;">
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Mostrar únicamente cartas de Bronce (≤64) y Plata (65-74) que son las que más suben de precio">
+                        <input type="checkbox" id="futbin-filter-bronze-silver" checked style="cursor:pointer; accent-color:#00ff88;" />
+                        <span>Bronces / Platas</span>
+                    </label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Mostrar únicamente jugadores que tienes en tu Club o Transferibles">
+                        <input type="checkbox" id="futbin-filter-in-club" checked style="cursor:pointer; accent-color:#00ff88;" />
+                        <span>En Mi Club</span>
+                    </label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Ocultar cartas que están a precio mínimo de descarte (no rentables para vender)">
+                        <input type="checkbox" id="futbin-filter-hide-minimum" checked style="cursor:pointer; accent-color:#00ff88;" />
+                        <span>Ocultar precio mín.</span>
+                    </label>
+                </div>
+
+                <!-- Acciones en lote para FUTBIN SBC -->
+                <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
+                    <button class="futgg-btn" id="futbin-scan-club-btn" style="padding:5px 8px; font-size:11px;" title="Escanear tu club para ver cuáles de estos jugadores tienes">🔍 Buscar en Club</button>
+                    <button class="futgg-btn" id="futbin-check-market-btn" style="padding:5px 8px; font-size:11px;" title="Revisar el precio de mercado real progresivo de estas cartas">📊 Chequear Mercado</button>
+                    <button class="futgg-btn primary" id="futbin-list-profitable-btn" style="padding:5px 10px; font-size:11px;" title="Listar únicamente las cartas rentables que NO estén a precio mínimo">🚀 Listar Rentables</button>
                 </div>
             </div>
             <div id="futgg-token-panel" style="display:none; flex-direction:column; gap:6px;">
@@ -2584,6 +3517,12 @@
 
         // Listeners Principales
         document.getElementById('futgg-close-btn').onclick = togglePanel;
+
+        // Pestañas
+        document.getElementById('futgg-tab-futgg').onclick = () => switchTab('futgg');
+        document.getElementById('futgg-tab-futbin').onclick = () => switchTab('futbin');
+
+        // Controles de FUT.GG
         document.getElementById('futgg-refresh-btn').onclick = () => {
             scheduleNextAutoSync(CONFIG.autoSyncIntervalMs);
             loadGemsFromFutGg(false);
@@ -2603,6 +3542,69 @@
         document.getElementById('futgg-paste-token-btn').onclick = pasteTokenClipboard;
         document.getElementById('futgg-refresh-token-btn').onclick = onRefreshTokenClick;
         document.getElementById('futgg-open-futgg-btn').onclick = () => window.open('https://www.fut.gg/gg-club/hidden-gems/', '_blank');
+
+        // Controles de FUTBIN SBC
+        const futbinReloadBtn = document.getElementById('futbin-reload-sbc-btn');
+        if (futbinReloadBtn) {
+            futbinReloadBtn.onclick = () => {
+                try {
+                    const latest = GM_getValue('futbin_sbc_data', null);
+                    if (latest) {
+                        State.futbinSbcData = latest;
+                        notificar(`🟢 Soluciones del SBC "${latest.challengeTitle}" cargadas`, "#00ff88");
+                        renderFutbinSbcTable();
+                    } else {
+                        notificar("No hay datos de FUTBIN guardados aún", "#ffaa00");
+                    }
+                } catch (e) { }
+            };
+        }
+
+        const futbinFetchBtn = document.getElementById('futbin-sbc-fetch-btn');
+        if (futbinFetchBtn) {
+            futbinFetchBtn.onclick = () => {
+                const urlInput = document.getElementById('futbin-sbc-url-input');
+                const countSelect = document.getElementById('futbin-sbc-sol-count-select');
+                const count = countSelect ? parseInt(countSelect.value, 10) : 5;
+                const targetUrl = (urlInput && urlInput.value.trim()) || (State.futbinSbcData && State.futbinSbcData.challengeUrl) || '';
+                if (targetUrl) {
+                    fetchFutbinSbcDirectly(targetUrl, count);
+                } else {
+                    notificar("Ingresa la URL o ID del desafío de FUTBIN", "#ffaa00");
+                }
+            };
+        }
+
+        const fBronzeSilver = document.getElementById('futbin-filter-bronze-silver');
+        if (fBronzeSilver) {
+            fBronzeSilver.onchange = (e) => {
+                State.futbinFilterOnlyBronzeSilver = e.target.checked;
+                renderFutbinSbcTable();
+            };
+        }
+
+        const fInClub = document.getElementById('futbin-filter-in-club');
+        if (fInClub) {
+            fInClub.onchange = (e) => {
+                State.futbinFilterOnlyInClub = e.target.checked;
+                renderFutbinSbcTable();
+            };
+        }
+
+        const fHideMin = document.getElementById('futbin-filter-hide-minimum');
+        if (fHideMin) {
+            fHideMin.onchange = (e) => {
+                State.futbinFilterHideMinimum = e.target.checked;
+                renderFutbinSbcTable();
+            };
+        }
+
+        const fScanClub = document.getElementById('futbin-scan-club-btn');
+        if (fScanClub) fScanClub.onclick = scanClubForFutbinPlayers;
+        const fCheckMarket = document.getElementById('futbin-check-market-btn');
+        if (fCheckMarket) fCheckMarket.onclick = batchCheckFutbinMarketPrices;
+        const fListProfitable = document.getElementById('futbin-list-profitable-btn');
+        if (fListProfitable) fListProfitable.onclick = batchListFutbinProfitable;
 
         initAutoSync();
         updateClubSyncButtonState();
@@ -2626,7 +3628,7 @@
             e.preventDefault();
             e.stopPropagation();
 
-            const gem = State.gems.find(g => String(g.eaId) === String(eaId));
+            const gem = findAnyPlayerById(eaId);
 
             if (action === 'check-market') {
                 State.focusedGemId = eaId;
@@ -2641,16 +3643,16 @@
                     State.marketPrices[eaId].loading = false;
                 }
                 notificar(`⏹️ Deteniendo análisis de mercado para ${gem ? gem.name : 'carta'}...`, "#ffaa00");
-                renderGemsTable();
+                renderCurrentTable();
             } else if (action === 'toggle-breakdown') {
                 State.openPriceBreakdowns[eaId] = !State.openPriceBreakdowns[eaId];
-                renderGemsTable();
+                renderCurrentTable();
             } else if (action === 'pick-price') {
                 const price = parseInt(btn.getAttribute('data-price'), 10);
                 if (price && eaId) {
                     State.focusedGemId = eaId;
                     State.customPrices[eaId] = price;
-                    renderGemsTable();
+                    renderCurrentTable();
                     notificar(`🎯 Precio seleccionado para ${gem ? gem.name : 'jugador'}: ${formatCoins(price)} (Puja: ${formatCoins(calculateStartBid(price))})`, "#00ff88");
                 }
             } else if (action === 'open-in-webapp') {
@@ -2947,6 +3949,11 @@
     function renderGemsTable() {
         const container = document.getElementById('futgg-table-container');
         if (!container) return;
+
+        if (State.activeTab === 'futbin') {
+            renderFutbinSbcTable();
+            return;
+        }
 
         if (State.gems.length === 0) {
             container.innerHTML = `
@@ -3356,25 +4363,368 @@
         }
     }
 
+    // =========================================================================
+    // RENDERIZADO DE TABLA DE SOLUCIONES FUTBIN SBC
+    // =========================================================================
+    function renderFutbinSbcTable() {
+        const container = document.getElementById('futgg-table-container');
+        if (!container) return;
+
+        // Si no hay datos de FUTBIN SBC
+        if (!State.futbinSbcData || !State.futbinSbcData.players || State.futbinSbcData.players.length === 0) {
+            container.innerHTML = `
+                <div style="text-align:center; padding: 60px 20px; color:#8fa0b5;">
+                    <div style="font-size:36px; margin-bottom:12px;">🧩</div>
+                    <div style="font-size:16px; font-weight:700; color:#fff; margin-bottom:8px;">No hay Soluciones SBC de FUTBIN cargadas</div>
+                    <div style="font-size:13px; max-width:550px; margin:0 auto 20px auto; line-height:1.6; color:#cbd5e1;">
+                        Puedes cargar las soluciones de 2 formas muy sencillas:<br/>
+                        1. Abre cualquier desafío en <a href="https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights" target="_blank" style="color:#00ff88; font-weight:bold; text-decoration:underline;">FUTBIN</a> y presiona el botón flotante <b>"⚡ Enviar a Web App"</b>.<br/>
+                        2. O pega la URL del SBC en el campo de arriba y haz clic en <b>"⚡ Analizar"</b>.
+                    </div>
+                    <div style="display:flex; justify-content:center; gap:10px;">
+                        <button class="futgg-btn primary" onclick="window.open('https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights', '_blank')">🌐 Abrir Spooky Nights en FUTBIN</button>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        const sbc = State.futbinSbcData;
+        const activeTitleEl = document.getElementById('futbin-sbc-active-title');
+        if (activeTitleEl) {
+            activeTitleEl.textContent = `${sbc.challengeTitle || 'SBC'} (${sbc.solutionCount || 5} sol.)`;
+            activeTitleEl.title = `${sbc.challengeTitle} - ${sbc.solutionCount} soluciones analizadas`;
+        }
+
+        updateFutbinTabBadge();
+
+        const displayedPlayers = getFilteredFutbinPlayers();
+
+        // Si los filtros excluyeron todo
+        if (displayedPlayers.length === 0) {
+            container.innerHTML = `
+                <div style="text-align:center; padding: 50px 20px; color:#8fa0b5;">
+                    <div style="font-size:32px; margin-bottom:10px;">🔍</div>
+                    <div style="font-size:15px; font-weight:700; color:#fff; margin-bottom:6px;">Ningún jugador coincide con los filtros activos</div>
+                    <div style="font-size:12px; color:#cbd5e1; max-width:480px; margin:0 auto 16px auto;">
+                        Tienes activos los filtros:
+                        ${State.futbinFilterOnlyBronzeSilver ? '<b>[Bronces/Platas]</b> ' : ''}
+                        ${State.futbinFilterOnlyInClub ? '<b>[En Mi Club]</b> ' : ''}
+                        ${State.futbinFilterHideMinimum ? '<b>[Ocultar Mínimo]</b> ' : ''}.<br/>
+                        Desmarca "En Mi Club" para ver todas las cartas requeridas por el SBC o haz clic en <b>"🔍 Buscar en Club"</b> para comprobar si las tienes.
+                    </div>
+                    <button class="futgg-btn primary" id="futbin-reset-filters-btn" style="padding:6px 14px; font-size:12px;">Desactivar filtro "En Mi Club"</button>
+                </div>
+            `;
+            const rBtn = document.getElementById('futbin-reset-filters-btn');
+            if (rBtn) {
+                rBtn.onclick = () => {
+                    State.futbinFilterOnlyInClub = false;
+                    const chk = document.getElementById('futbin-filter-in-club');
+                    if (chk) chk.checked = false;
+                    renderFutbinSbcTable();
+                };
+            }
+            return;
+        }
+
+        // Ordenamiento inteligente:
+        // 1. Disponibles para vender (en transferibles o en club tradeable)
+        // 2. Si ya fue consultado en mercado: mayor valor de mercado / ganancia real
+        // 3. Frecuencia en soluciones (los más repetidos en squads)
+        // 4. Menor rating (bronces y platas primero)
+        displayedPlayers.sort((a, b) => {
+            const eaIdA = Number(a.eaId);
+            const eaIdB = Number(b.eaId);
+            const inClubA = State.clubMatches[eaIdA];
+            const inClubB = State.clubMatches[eaIdB];
+            const inTransferA = State.transferMatches[eaIdA];
+            const inTransferB = State.transferMatches[eaIdB];
+            const isAvailA = inTransferA || (inClubA && isItemTradeable(inClubA));
+            const isAvailB = inTransferB || (inClubB && isItemTradeable(inClubB));
+
+            if (isAvailA && !isAvailB) return -1;
+            if (!isAvailA && isAvailB) return 1;
+
+            const marketA = State.marketPrices[eaIdA];
+            const marketB = State.marketPrices[eaIdB];
+            const priceA = marketA && !marketA.error ? (marketA.hasOutlier ? marketA.realisticBin : (marketA.lowestBin || 0)) : (a.futbinPrice || 0);
+            const priceB = marketB && !marketB.error ? (marketB.hasOutlier ? marketB.realisticBin : (marketB.lowestBin || 0)) : (b.futbinPrice || 0);
+
+            if (priceB !== priceA) return priceB - priceA;
+            if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+            return a.rating - b.rating;
+        });
+
+        const gemsCountEl = document.getElementById('futgg-gems-count');
+        if (gemsCountEl) {
+            gemsCountEl.textContent = `SBC: ${displayedPlayers.length} cartas mostradas (de ${sbc.players.length} en ${sbc.solutionCount || 5} soluciones)`;
+        }
+
+        let html = `
+            <table class="futgg-table">
+                <thead>
+                    <tr>
+                        <th style="width:24%;">Jugador SBC</th>
+                        <th style="width:14%;">En Mi Club</th>
+                        <th style="width:14%;">Frecuencia SBC</th>
+                        <th style="width:12%;">Est. FUTBIN</th>
+                        <th style="width:18%;">Mercado Real (EA)</th>
+                        <th style="width:10%;">Listar Por</th>
+                        <th style="width:8%; text-align:center;">Acción</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        for (const p of displayedPlayers) {
+            const eaId = Number(p.eaId);
+            const inClub = State.clubMatches[eaId];
+            const inTransfer = State.transferMatches[eaId];
+            const selling = State.sellingMatches[eaId];
+            const sold = State.soldMatches[eaId];
+            const market = State.marketPrices[eaId];
+
+            // Estado en Club
+            let clubStatusHtml = '';
+            if (selling) {
+                const expiresMin = formatTimeRemaining(selling.expires);
+                clubStatusHtml = `
+                    <span class="futgg-tag selling" title="En venta activa a ${formatCoins(selling.buyNow)}. Expira en ${expiresMin}">
+                        🚀 En Venta (${formatCoins(selling.buyNow)})
+                    </span>
+                    <div style="font-size:10px; color:#00ccff; margin-top:2px;">⏱️ ${expiresMin}</div>
+                `;
+            } else if (inTransfer) {
+                clubStatusHtml = `<span class="futgg-tag transfer" title="Listo en Lista de Transferibles para ser listado">📋 En Transferibles</span>`;
+            } else if (inClub && isItemTradeable(inClub)) {
+                clubStatusHtml = `<span class="futgg-tag club" title="En el Club (Transferible)">✓ En Club (Tradeable)</span>`;
+            } else if (inClub && !isItemTradeable(inClub)) {
+                clubStatusHtml = `<span class="futgg-tag none" title="En el Club pero Intransferible">🔒 Intransferible</span>`;
+            } else if (sold) {
+                clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;">✅ Ya Vendido</span>`;
+            } else {
+                clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;">✕ Fuera de Club</span>`;
+            }
+
+            // Frecuencia en Soluciones
+            const freqPercent = Math.round((p.frequency / (sbc.solutionCount || 5)) * 100);
+            const isHot = p.frequency >= 3;
+            const solList = (p.solutions || []).map(s => `#${s}`).join(', ');
+            const freqHtml = `
+                <div class="futgg-frequency-badge ${isHot ? 'hot' : ''}" title="Aparece en las soluciones ${solList} (${freqPercent}%)">
+                    <span>${isHot ? '🔥' : '🧩'} ${p.frequency}/${sbc.solutionCount || 5} Sol.</span>
+                </div>
+                <div style="font-size:10px; color:#8fa0b5; margin-top:2px;">Sol: ${solList}</div>
+            `;
+
+            // Calidad
+            const qClass = p.quality || (p.rating <= 64 ? 'bronze' : (p.rating <= 74 ? 'silver' : 'gold'));
+            const qBadge = `<span class="futgg-quality-badge ${qClass}">${qClass}</span>`;
+
+            // Columna Mercado Real
+            let marketHtml = '';
+            if (!market) {
+                marketHtml = `
+                    <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="check-market" data-eaid="${eaId}" title="Buscar en mercado con filtro progresivo">🔍 Consultar</button>
+                    <button class="futgg-btn" style="padding:4px 6px; font-size:10px; color:#8fa0b5;" data-action="search-market-open" data-eaid="${eaId}" title="Búsqueda abierta sin tope de precio">🌐 Sin tope</button>
+                `;
+            } else if (market.loading || market.crawling) {
+                marketHtml = `
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:11px; color:#00ccff; font-weight:bold;">⏳ Buscando...</span>
+                        <button class="futgg-btn danger" style="padding:2px 6px; font-size:10px;" data-action="stop-market-crawl" data-eaid="${eaId}" title="Detener búsqueda">⏹️ Parar</button>
+                    </div>
+                    <div style="font-size:10px; color:#8fa0b5; margin-top:2px;">Filtro: ${market.filterLabel || 'Iniciando...'}</div>
+                `;
+            } else if (market.error) {
+                marketHtml = `
+                    <div style="color:#ff5555; font-size:11px;">⚠️ Error mercado</div>
+                    <button class="futgg-btn" style="padding:2px 6px; font-size:10px; margin-top:2px;" data-action="check-market" data-eaid="${eaId}">Reintentar</button>
+                `;
+            } else if (market.isExtinct) {
+                marketHtml = `
+                    <span class="futgg-tag extinct">🔥 EXTINTA</span>
+                    <div style="font-size:10px; color:#ff5555; margin-top:2px;">Sin cartas en el mercado</div>
+                `;
+            } else {
+                const bin = market.hasOutlier ? market.realisticBin : market.lowestBin;
+                const isMin = isMinimumPrice(p, market);
+                const isInflated = isInflatedGem(p, market);
+
+                let statusBadge = '';
+                if (isMin) {
+                    statusBadge = `<span class="futgg-tag none" style="border:1px solid #ffaa00; color:#ffaa00; font-weight:700;">⚠️ Precio Mínimo</span>`;
+                } else if (isInflated) {
+                    statusBadge = `<span class="futgg-tag club" style="border:1px solid #00ff88; color:#00ff88; font-weight:800;">🔥 ¡GEMA INFLADA!</span>`;
+                } else {
+                    statusBadge = `<span class="futgg-tag none">✓ Normal</span>`;
+                }
+
+                marketHtml = `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                        <span style="font-weight:800; color:${isInflated ? '#00ff88' : (isMin ? '#ffaa00' : '#fff')}; font-size:13px;">
+                            ${formatCoins(bin)}
+                        </span>
+                        ${statusBadge}
+                    </div>
+                    <div style="font-size:10px; color:#8fa0b5; margin-top:2px; display:flex; align-items:center; justify-content:space-between;">
+                        <span>Muestra: ${market.count || 0} cartas (${market.filterLabel || ''})</span>
+                        <a href="javascript:void(0)" data-action="toggle-breakdown" data-eaid="${eaId}" style="color:#00ccff; text-decoration:none; font-weight:600;">
+                            ${State.openPriceBreakdowns[eaId] ? '▲ Ocultar' : '▼ Desglose'}
+                        </a>
+                    </div>
+                `;
+
+                // Desglose interactivo si está abierto
+                if (State.openPriceBreakdowns[eaId] && market.tiers && market.tiers.length > 0) {
+                    marketHtml += `
+                        <div class="futgg-price-breakdown">
+                            <div class="futgg-breakdown-header">
+                                <span>DISTRIBUCIÓN DE PRECIOS (${market.tiers.length} NIVELES)</span>
+                                <span>TOTAL: ${market.count}</span>
+                            </div>
+                            ${market.hasOutlier ? `<div class="futgg-outlier-box">${market.outlierReason}</div>` : ''}
+                            <div class="futgg-tiers-container">
+                                ${market.tiers.map(t => {
+                                    const isSelected = State.customPrices[eaId] === t.price;
+                                    const isOutlierTier = t.isOutlier;
+                                    return `
+                                        <div class="futgg-tier-row ${isSelected ? 'selected' : ''} ${isOutlierTier ? 'outlier' : ''}" data-action="pick-price" data-eaid="${eaId}" data-price="${t.price}" title="Clic para elegir vender a ${formatCoins(t.price)}">
+                                            <span style="font-weight:700; color:${isOutlierTier ? '#ffaa00' : '#ffffff'};">${formatCoins(t.price)}</span>
+                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                <span class="futgg-tier-badge ${isOutlierTier ? '' : 'safe'}">${t.count} carta(s)</span>
+                                                ${isOutlierTier ? '<span style="font-size:9px; color:#ffaa00;">(Ganga)</span>' : ''}
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            // Columna Precio de Venta
+            let priceColHtml = '';
+            const suggested = State.customPrices[eaId] || (market && market.lowestBin ? Math.max(200, market.lowestBin - CONFIG.undercutAmount) : 0);
+            if (suggested > 0) {
+                const isMin = market ? isMinimumPrice(p, market) : false;
+                priceColHtml = `
+                    <div style="display:flex; align-items:center; gap:2px;">
+                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
+                        <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${suggested}" style="${isMin ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" />
+                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
+                    </div>
+                    <div style="font-size:10px; color:#8fa0b5; margin-top:2px;">Puja: <b>${formatCoins(calculateStartBid(suggested))}</b></div>
+                `;
+            } else {
+                priceColHtml = `<span style="color:#64748b; font-size:11px;">Consultar mercado</span>`;
+            }
+
+            // Columna Acciones
+            let actionHtml = '';
+            const isMin = market ? isMinimumPrice(p, market) : false;
+            if (selling) {
+                actionHtml = `<span style="font-size:11px; color:#00ccff; font-weight:bold;">🚀 En venta</span>`;
+            } else if (inTransfer) {
+                if (isMin) {
+                    actionHtml = `
+                        <button class="futgg-btn" style="padding:4px 8px; font-size:10px; border-color:#ffaa00; color:#ffaa00;" data-action="list" data-eaid="${eaId}" title="⚠️ Carta a precio mínimo de descarte. Si la vendes no da beneficio.">⚠️ Mínimo</button>
+                    `;
+                } else {
+                    actionHtml = `
+                        <button class="futgg-btn primary" style="padding:4px 10px; font-size:11px;" data-action="list" data-eaid="${eaId}" title="Listar de inmediato por ${formatCoins(suggested)}">🚀 Listar</button>
+                    `;
+                }
+            } else if (inClub && isItemTradeable(inClub)) {
+                if (isMin) {
+                    actionHtml = `
+                        <div style="display:flex; gap:4px;">
+                            <button class="futgg-btn" style="padding:3px 6px; font-size:10px;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
+                            <span style="font-size:10px; color:#ffaa00; align-self:center;" title="Precio mínimo de descarte">⚠️ Mínimo</span>
+                        </div>
+                    `;
+                } else {
+                    actionHtml = `
+                        <div style="display:flex; gap:4px;">
+                            <button class="futgg-btn" style="padding:3px 6px; font-size:10px;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
+                            <button class="futgg-btn primary" style="padding:3px 8px; font-size:10px;" data-action="list" data-eaid="${eaId}" title="Listar de inmediato">🚀 Listar</button>
+                        </div>
+                    `;
+                }
+            } else if (inClub && !isItemTradeable(inClub)) {
+                actionHtml = `<span style="font-size:11px; color:#64748b; font-style:italic;">🔒 Intransferible</span>`;
+            } else if (sold) {
+                actionHtml = `<span style="font-size:11px; color:#64748b;">✅ Ya Vendido</span>`;
+            } else {
+                actionHtml = `
+                    <button class="futgg-btn" style="padding:3px 6px; font-size:10px;" data-action="search-club" data-eaid="${eaId}" title="Buscar en mi club">🔍 Escanear</button>
+                `;
+            }
+
+            const isFocused = State.focusedGemId && Number(State.focusedGemId) === eaId;
+            const rowClass = `${selling ? 'row-selling' : ''} ${isFocused ? 'futgg-row-focused' : ''}`.trim();
+
+            html += `
+                <tr class="${rowClass}" data-eaid="${eaId}" id="futgg-row-${eaId}">
+                    <td>
+                        <div class="futgg-player-cell">
+                            <span class="futgg-rating">${p.rating || '---'}</span>
+                            <div>
+                                <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:6px;">
+                                    <span>${p.name}</span>
+                                    ${qBadge}
+                                    <span style="font-size:10px; color:#00ff88; font-weight:800;">${p.position || ''}</span>
+                                </div>
+                                <div style="font-size:10px; color:#8fa0b5;">ID: ${eaId}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>${clubStatusHtml}</td>
+                    <td>${freqHtml}</td>
+                    <td>
+                        <div style="font-weight:700; color:#ffcc00;">${formatCoins(p.futbinPrice || 0)}</div>
+                    </td>
+                    <td>${marketHtml}</td>
+                    <td>${priceColHtml}</td>
+                    <td style="text-align:center;">${actionHtml}</td>
+                </tr>
+            `;
+        }
+
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+
+        if (State.focusedGemId) {
+            const targetRow = container.querySelector(`tr[data-eaid="${State.focusedGemId}"]`);
+            if (targetRow) {
+                try {
+                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } catch (e) { }
+            }
+        }
+    }
+
     // Auto-actualización periódica de tiempos restantes en vivo cada 15s si el panel está visible
     setInterval(() => {
         if (State.isOpen && Object.keys(State.sellingMatches).length > 0) {
-            renderGemsTable();
+            renderCurrentTable();
         }
     }, 15000);
 
     // Exponer globalmente también en window y unsafeWindow
     const win = getAppWindow();
     win.__futggCheckMarket = (id) => {
-        const gem = State.gems.find(g => String(g.eaId) === String(id));
+        const gem = findAnyPlayerById(id);
         if (gem) checkMarketPrice(gem, false);
     };
     win.__futggMoveToTransfer = (id) => {
-        const gem = State.gems.find(g => String(g.eaId) === String(id));
+        const gem = findAnyPlayerById(id);
         if (gem) moveToTransferList(gem);
     };
     win.__futggListCard = (id) => {
-        const gem = State.gems.find(g => String(g.eaId) === String(id));
+        const gem = findAnyPlayerById(id);
         if (gem) listCardOnMarket(gem);
     };
 
