@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.9.5
+// @version      1.9.6
 // @description  Automatiza el flujo de Hidden Gems de FUT.GG en la Web App de EA FC 27: botón Sync Club con cooldown dinámico y tooltip, auto-sync en segundo plano sin notificaciones invasivas, barra en 1 línea y tabla ultra compacta.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -688,10 +688,11 @@
         sellingMatches: {},    // eaId -> { item, auction, expires, expiresAt, buyNow } (vendiéndose activas)
         soldMatches: {},       // eaId -> ItemData (ya vendidas)
         hideSoldOrMissing: true, // Ocultar cartas ya vendidas o no presentes
-        marketPrices: {},      // eaId -> { lowestBin, realisticBin, hasOutlier, outlierReason, count, tiers, rawItems, pageLoaded, hasMorePages, isExtinct, crawling, updatedAt }
+        marketPrices: {},      // eaId -> { lowestBin, realisticBin, hasOutlier, outlierReason, count, tiers, rawItems, filterLabel, filterType, hasMore, isExtinct, crawling, updatedAt }
         openPriceBreakdowns: {}, // eaId -> boolean (si el desglose está desplegado)
         abortMarketCrawl: {},  // eaId -> boolean (para detener el escaneo continuo de páginas)
         customPrices: {},      // eaId -> precio de venta elegido por el usuario
+        focusedGemId: null,    // eaId de la carta actualmente bajo interacción (para mantener el foco tras reordenar)
         isBatchRunning: false,
         batchStatusText: '',
         searchCountSession: 0,
@@ -1044,7 +1045,7 @@
         return { tiers, lowestBin, realisticBin, hasOutlier, outlierReason };
     }
 
-    async function checkMarketPrice(gem, isAutomated = false, maxPages = (CONFIG.maxMarketPages || 2), allowEarlyStop = true) {
+    async function checkMarketPrice(gem, isAutomated = false, forceOpen = false) {
         const win = getAppWindow();
         const services = win.services;
 
@@ -1054,50 +1055,44 @@
         }
 
         const eaId = Number(gem.eaId);
+        State.focusedGemId = eaId; // Mantener foco visual en esta carta tras reordenar
         State.abortMarketCrawl[eaId] = false;
         State.marketPrices[eaId] = {
             loading: true,
             crawling: true,
-            pageLoaded: 1,
+            filterLabel: forceOpen ? 'Abierto (sin tope)' : 'Iniciando...',
+            filterType: forceOpen ? 'open' : 'tight',
             count: 0
         };
         State.openPriceBreakdowns[eaId] = true;
         renderGemsTable();
         notificar(`🔍 Consultando mercado de ${gem.name}...`, "#00ccff");
 
-        // Limpiar la caché interna de mercado de la Web App antes de buscar
+        // Limpiar caché antes de la primera búsqueda
         if (services.Item && typeof services.Item.clearTransferMarketCache === 'function') {
-            try {
-                services.Item.clearTransferMarketCache();
-            } catch (e) {
-                console.warn("[FUT.GG Helper] Error al limpiar caché de mercado:", e);
-            }
+            try { services.Item.clearTransferMarketCache(); } catch (e) { }
         }
 
-        let allItems = [];
-        let currentPage = 1;
-        let hitEnd = false;
-
-        // Anclaje inteligente por precio máximo (maxBuy) estilo Paletools:
-        // Si tenemos precio estimado de FUT.GG, fijamos un techo con buffer (15% o al menos 2 bid steps).
-        // Así evitamos pedir 29 páginas a ciegas y obtenemos las cartas baratas en 1 SOLA petición!
         const estPrice = Number(gem.estimatedPrice || 0);
-        let targetMaxBuy = 0;
-        if (estPrice > 0) {
-            const buffer = Math.max(getBidStep(estPrice) * 2, Math.round(estPrice * 0.15));
-            targetMaxBuy = roundToValidBid(estPrice + buffer, 'up');
-            if (targetMaxBuy < 200) targetMaxBuy = 200;
-        }
+
+        // Estrategia de búsqueda progresiva inteligente:
+        // Etapa 1: Filtro inicial acotado (+15% / 2 bid steps sobre estPrice de FUT.GG)
+        // Etapa 2: Si devuelve muestra insuficiente (< 3 cartas), ampliamos +50%
+        // Etapa 3: Si aún es insuficiente (< 3 cartas) o si forceOpen=true, búsqueda abierta sin tope
+        let stage = (forceOpen || estPrice <= 0) ? 3 : 1;
+        let allItems = [];
+        let filterLabel = '';
+        let filterType = 'open';
 
         try {
-            while (currentPage <= maxPages) {
+            while (stage <= 3) {
                 if (State.abortMarketCrawl[eaId]) {
                     notificar(`⏹️ Verificación detenida por el usuario para ${gem.name}`, "#ffaa00");
                     break;
                 }
 
-                // Delay humano entre peticiones
-                if (currentPage > 1) {
+                // Delay humano entre etapas o peticiones automatizadas
+                if (stage > 1) {
                     await randomDelay(CONFIG.pageDelayMin || 1400, CONFIG.pageDelayMax || 2300);
                 } else if (isAutomated) {
                     await randomDelay(CONFIG.minMarketDelay, CONFIG.maxMarketDelay);
@@ -1110,9 +1105,32 @@
                     await new Promise(r => setTimeout(r, CONFIG.burstPauseMs));
                 }
 
-                // Limpiar la caché del mercado de EA en cada búsqueda para forzar consulta limpia
+                // Limpiar caché de mercado de EA en cada etapa para forzar datos limpios
                 if (services.Item && typeof services.Item.clearTransferMarketCache === 'function') {
-                    try { services.Item.clearTransferMarketCache(); } catch (e) {}
+                    try { services.Item.clearTransferMarketCache(); } catch (e) { }
+                }
+
+                let targetMaxBuy = 0;
+                if (stage === 1) {
+                    const buffer = Math.max(getBidStep(estPrice) * 2, Math.round(estPrice * 0.15));
+                    targetMaxBuy = roundToValidBid(estPrice + buffer, 'up');
+                    if (targetMaxBuy < 200) targetMaxBuy = 200;
+                    filterLabel = `≤ ${formatCoins(targetMaxBuy)} (+15%)`;
+                    filterType = 'tight';
+                } else if (stage === 2) {
+                    // Ampliación del 50%
+                    const firstFound = allItems[0];
+                    const firstFoundPrice = firstFound ? ((firstFound._auction && firstFound._auction.buyNowPrice) || firstFound.buyNowPrice || 0) : 0;
+                    const base = Math.max(estPrice, firstFoundPrice);
+                    targetMaxBuy = roundToValidBid(Math.round(base * 1.5), 'up');
+                    if (targetMaxBuy < 200) targetMaxBuy = 200;
+                    filterLabel = `≤ ${formatCoins(targetMaxBuy)} (+50%)`;
+                    filterType = 'widened';
+                } else {
+                    // Etapa 3: Búsqueda abierta sin límite de maxBuy
+                    targetMaxBuy = 0;
+                    filterLabel = `Abierto (sin tope)`;
+                    filterType = 'open';
                 }
 
                 const criteria = createSearchCriteria(eaId);
@@ -1124,69 +1142,40 @@
                     criteria.maxBuy = targetMaxBuy;
                 }
 
-                const res = await callEAService(services.Item.searchTransferMarket(criteria, currentPage));
+                const res = await callEAService(services.Item.searchTransferMarket(criteria, 1));
                 const pageItems = extractItemsFromEaResponse(res);
-
-                // Filtrar solo las cartas que realmente coinciden con el jugador buscado
                 const validItems = (pageItems || []).filter(it => matchesCard(it, eaId, gem.name));
 
-                // CASO ESPECIAL: Si con targetMaxBuy devolvió 0 cartas en página 1,
-                // significa que el precio subió por encima del estimado de FUT.GG.
-                // Hacemos 1 reintento abierto (sin maxBuy) en página 1 para encontrar el precio real actual.
-                if (currentPage === 1 && validItems.length === 0 && targetMaxBuy > 0) {
-                    console.log(`[FUT.GG Helper] 0 cartas a maxBuy ${targetMaxBuy}. Reintentando búsqueda abierta en página 1...`);
-                    await randomDelay(CONFIG.pageDelayMin || 1400, CONFIG.pageDelayMax || 2300);
-                    if (services.Item && typeof services.Item.clearTransferMarketCache === 'function') {
-                        try { services.Item.clearTransferMarketCache(); } catch (e) {}
-                    }
-                    const fallbackCrit = createSearchCriteria(eaId);
-                    fallbackCrit.count = 21;
-                    fallbackCrit.type = (win.SearchType && win.SearchType.PLAYER) || 'player';
-                    fallbackCrit.defId = [eaId];
-                    fallbackCrit.maskedDefId = eaId;
-
-                    const fbRes = await callEAService(services.Item.searchTransferMarket(fallbackCrit, 1));
-                    const fbItems = extractItemsFromEaResponse(fbRes);
-                    const fbValid = (fbItems || []).filter(it => matchesCard(it, eaId, gem.name));
-                    if (fbValid.length > 0) {
-                        allItems = fbValid;
-                        hitEnd = (fbItems || []).length < 21;
-                    } else {
-                        hitEnd = true;
-                    }
-                    targetMaxBuy = 0; // Desactivar targetMaxBuy para el resto
-                } else {
-                    if (validItems.length > 0) {
-                        allItems = allItems.concat(validItems);
-                    }
-                    if (!pageItems || pageItems.length < 21) {
-                        hitEnd = true;
-                    }
-                }
+                allItems = validItems;
 
                 // Actualizar estado en vivo en la UI
                 if (State.marketPrices[eaId]) {
-                    State.marketPrices[eaId].pageLoaded = currentPage;
+                    State.marketPrices[eaId].filterLabel = filterLabel;
+                    State.marketPrices[eaId].filterType = filterType;
                     State.marketPrices[eaId].count = allItems.length;
                     renderGemsTable();
                 }
 
-                // CORTE TEMPRANO INTELIGENTE (EARLY STOP):
-                // Si encontramos suficientes cartas al precio mínimo o terminó el mercado, detenerse de inmediato.
-                if (allItems.length > 0 && allowEarlyStop) {
-                    const previewAnalysis = analyzeMarketTiers(allItems);
-                    const lowestCount = (previewAnalysis.tiers[0] && previewAnalysis.tiers[0].count) || 0;
-                    const stopThreshold = CONFIG.earlyStopCount || 3;
-
-                    if (lowestCount >= stopThreshold || hitEnd) {
-                        hitEnd = true;
-                        break;
-                    }
-                } else if (hitEnd) {
+                // Criterio de suficiencia de muestra:
+                // 1. Si estamos en búsqueda abierta (stage === 3), lo devuelto por EA es el mercado completo. Terminamos.
+                if (stage === 3) {
                     break;
                 }
 
-                currentPage++;
+                // 2. Si obtuvimos al menos 3 cartas (o earlyStopCount), tenemos muestra suficiente para piso y detección de snipes.
+                const stopThreshold = CONFIG.earlyStopCount || 3;
+                if (allItems.length >= stopThreshold) {
+                    break;
+                }
+
+                // 3. Si obtuvimos menos de 3 cartas (0, 1 o 2 cartas), la muestra es insuficiente para descartar snipes:
+                if (stage === 1) {
+                    console.log(`[FUT.GG Helper] Muestra insuficiente (${allItems.length} cartas a ${filterLabel}) para ${gem.name}. Ampliando a +50%...`);
+                    stage = 2;
+                } else if (stage === 2) {
+                    console.log(`[FUT.GG Helper] Muestra aún insuficiente (${allItems.length} cartas a ${filterLabel}) para ${gem.name}. Pasando a búsqueda abierta...`);
+                    stage = 3;
+                }
             }
 
             if (allItems.length === 0) {
@@ -1197,8 +1186,9 @@
                     isExtinct: true,
                     tiers: [],
                     rawItems: [],
-                    pageLoaded: currentPage,
-                    hasMorePages: false,
+                    filterLabel,
+                    filterType,
+                    hasMore: false,
                     crawling: false,
                     loading: false,
                     updatedAt: Date.now()
@@ -1216,8 +1206,9 @@
                     hasOutlier: analysis.hasOutlier,
                     outlierReason: analysis.outlierReason,
                     count: allItems.length,
-                    hasMorePages: !hitEnd,
-                    pageLoaded: currentPage,
+                    hasMore: allItems.length >= 21,
+                    filterLabel,
+                    filterType,
                     tiers: analysis.tiers,
                     rawItems: allItems,
                     isExtinct: false,
@@ -1233,11 +1224,10 @@
                     State.customPrices[eaId] = roundToValidBid(suggested, 'down');
                 }
 
-                const pageCountText = currentPage === 1 ? '1 pág' : `${currentPage} págs`;
                 if (analysis.hasOutlier) {
-                    notificar(`⚠️ ${gem.name}: ¡Ganga a ${formatCoins(analysis.lowestBin)}! Piso real: ${formatCoins(analysis.realisticBin)} (${allItems.length} cartas en ${pageCountText})`, "#ffaa00");
+                    notificar(`⚠️ ${gem.name}: ¡Ganga a ${formatCoins(analysis.lowestBin)}! Piso real: ${formatCoins(analysis.realisticBin)} (${allItems.length} cartas, filtro: ${filterLabel})`, "#ffaa00");
                 } else {
-                    notificar(`📊 ${gem.name}: Min BIN ${formatCoins(analysis.lowestBin)} (${allItems.length} cartas en ${pageCountText})`, "#00ff88");
+                    notificar(`📊 ${gem.name}: Min BIN ${formatCoins(analysis.lowestBin)} (${allItems.length} cartas, filtro: ${filterLabel})`, "#00ff88");
                 }
             }
         } catch (err) {
@@ -1249,9 +1239,9 @@
                 alert("⚠️ ALERTA DE SEGURIDAD EA: Límite de peticiones alcanzado o Captcha detectado. El helper se detuvo para proteger tu cuenta.");
                 throw err;
             }
+        } finally {
+            renderGemsTable();
         }
-
-        renderGemsTable();
     }
 
     // Interceptar y cerrar automáticamente modales de "Destination full / Lista llena"
@@ -2035,6 +2025,12 @@
                 background: rgba(0, 255, 136, 0.25);
                 color: #00ff88;
             }
+            .futgg-table tr.futgg-row-focused td {
+                background: rgba(0, 204, 255, 0.25) !important;
+                border-top: 1px solid #00ccff !important;
+                border-bottom: 1px solid #00ccff !important;
+                transition: background 1.5s ease;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -2633,7 +2629,11 @@
             const gem = State.gems.find(g => String(g.eaId) === String(eaId));
 
             if (action === 'check-market') {
-                if (gem) checkMarketPrice(gem, false, CONFIG.maxMarketPages || 2);
+                State.focusedGemId = eaId;
+                if (gem) checkMarketPrice(gem, false, false);
+            } else if (action === 'search-market-open') {
+                State.focusedGemId = eaId;
+                if (gem) checkMarketPrice(gem, false, true);
             } else if (action === 'stop-market-crawl') {
                 State.abortMarketCrawl[eaId] = true;
                 if (State.marketPrices[eaId]) {
@@ -2642,15 +2642,13 @@
                 }
                 notificar(`⏹️ Deteniendo análisis de mercado para ${gem ? gem.name : 'carta'}...`, "#ffaa00");
                 renderGemsTable();
-            } else if (action === 'load-next-page') {
-                const currentPage = (State.marketPrices[eaId] && State.marketPrices[eaId].pageLoaded) || 1;
-                if (gem) checkMarketPrice(gem, false, currentPage + 1, false);
             } else if (action === 'toggle-breakdown') {
                 State.openPriceBreakdowns[eaId] = !State.openPriceBreakdowns[eaId];
                 renderGemsTable();
             } else if (action === 'pick-price') {
                 const price = parseInt(btn.getAttribute('data-price'), 10);
                 if (price && eaId) {
+                    State.focusedGemId = eaId;
                     State.customPrices[eaId] = price;
                     renderGemsTable();
                     notificar(`🎯 Precio seleccionado para ${gem ? gem.name : 'jugador'}: ${formatCoins(price)} (Puja: ${formatCoins(calculateStartBid(price))})`, "#00ff88");
@@ -3041,8 +3039,29 @@
                 return prioA - prioB;
             }
 
-            // Dentro del mismo grupo, ordenar por mayor beneficio de monedas estimado
-            return (b.profit || b.estimatedPrice || 0) - (a.profit || a.estimatedPrice || 0);
+            // Dentro del mismo grupo, ordenar por mayor beneficio/valor real del mercado (si ya fue consultado)
+            const getEffectiveValue = (gem) => {
+                const id = Number(gem.eaId);
+                const market = State.marketPrices[id];
+                if (market && !market.error && !market.loading && !market.crawling) {
+                    if (market.isExtinct) {
+                        return gem.profit || gem.estimatedPrice || 10000;
+                    }
+                    const realPrice = market.hasOutlier ? market.realisticBin : (market.lowestBin || 0);
+                    if (realPrice > 0) {
+                        const cost = Math.max(0, (gem.estimatedPrice || 0) - (gem.profit || 0));
+                        return Math.max(0, realPrice - cost);
+                    }
+                }
+                return gem.profit || gem.estimatedPrice || 0;
+            };
+
+            const valA = getEffectiveValue(a);
+            const valB = getEffectiveValue(b);
+            if (valB !== valA) {
+                return valB - valA;
+            }
+            return (b.estimatedPrice || 0) - (a.estimatedPrice || 0);
         });
 
         const gemsCountEl = document.getElementById('futgg-gems-count');
@@ -3159,16 +3178,19 @@
                 const isBreakdownOpen = !!State.openPriceBreakdowns[eaId];
                 const diff = (market.hasOutlier ? market.realisticBin : market.lowestBin) - gem.estimatedPrice;
                 const diffColor = diff >= 0 ? '#00ff88' : '#ff5555';
-                const hasMore = market.hasMorePages;
+                const hasMore = market.hasMore;
 
                 let breakdownHtml = '';
                 if (isBreakdownOpen && market.tiers && market.tiers.length > 0) {
                     breakdownHtml = `
                         <div class="futgg-price-breakdown">
                             <div class="futgg-breakdown-header">
-                                <span>Cartas analizadas: <b>${market.count}${hasMore ? '+' : ''}</b> (pág. ${market.pageLoaded || 1})</span>
-                                <div style="display:flex; gap:4px;">
-                                    ${hasMore ? `<button class="futgg-btn" style="padding:1px 5px; font-size:9px;" data-action="load-next-page" data-eaid="${eaId}" title="Cargar siguientes 21 cartas">+ Pág ${(market.pageLoaded || 1) + 1}</button>` : ''}
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <span>Cartas analizadas: <b>${market.count}${hasMore ? '+' : ''}</b></span>
+                                    ${market.filterLabel ? `<span style="font-size:10px; color:#38bdf8;">🎯 Filtro: <b>${market.filterLabel}</b></span>` : ''}
+                                </div>
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    ${market.filterType !== 'open' ? `<button class="futgg-btn" style="padding:1px 6px; font-size:9px; border-color:#38bdf8; color:#38bdf8;" data-action="search-market-open" data-eaid="${eaId}" title="Buscar en todo el mercado sin tope de precio">🌐 Sin tope</button>` : ''}
                                     <button class="futgg-btn" style="padding:1px 5px; font-size:9px;" data-action="open-in-webapp" data-eaid="${eaId}" title="Abrir en pantalla completa de EA">👁️ EA</button>
                                     <button class="futgg-btn" style="padding:1px 6px; font-size:9px; border-color:#ff5555; color:#ff7777;" data-action="toggle-breakdown" data-eaid="${eaId}" title="Comprimir lista">▲ Cerrar</button>
                                 </div>
@@ -3191,7 +3213,7 @@
                                                  ${isSel ? '<span style="color:#00ff88; font-size:10px;">✔</span>' : ''}
                                              </div>
                                          </div>
-                                    `;
+                                     `;
                     }).join('')}
                             </div>
                             <button class="futgg-btn" style="width:100%; margin-top:6px; padding:4px 0; font-size:10px; justify-content:center; background:#182434; border:1px solid #33475f; color:#cbd5e1; cursor:pointer;" data-action="toggle-breakdown" data-eaid="${eaId}" title="Comprimir lista de precios">▲ Comprimir lista de precios</button>
@@ -3208,11 +3230,11 @@
                         : `<b>Min BIN: ${formatCoins(market.lowestBin)}</b>`
                     }
                                 <div style="font-size:10px; color:#8fa0b5;">
-                                    ${market.count}${hasMore ? '+' : ''} activas | Dif: <span style="color:${diffColor}; font-weight:bold;">${diff >= 0 ? '+' : ''}${diff}</span>
+                                    ${market.count}${hasMore ? '+' : ''} activas ${market.filterLabel ? `<span style="color:#38bdf8;">(${market.filterLabel})</span>` : ''} | Dif: <span style="color:${diffColor}; font-weight:bold;">${diff >= 0 ? '+' : ''}${diff}</span>
                                 </div>
                             </div>
                             <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
-                                <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Actualizar mercado">🔄</button>
+                                <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Actualizar mercado (automático)">🔄</button>
                                 <button class="futgg-btn" style="padding:2px 6px; font-size:9px; white-space:nowrap; ${isBreakdownOpen ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" data-action="toggle-breakdown" data-eaid="${eaId}" title="${isBreakdownOpen ? 'Comprimir lista' : 'Ver desglose de precios'}">
                                     ${isBreakdownOpen ? '▲ Comprimir' : `▼ Ver ${market.tiers.length}`}
                                 </button>
@@ -3291,9 +3313,10 @@
                 `;
             }
 
-            const rowClass = selling ? 'row-selling' : (sold ? 'row-sold' : '');
+            const isFocused = State.focusedGemId && Number(State.focusedGemId) === eaId;
+            const rowClass = `${selling ? 'row-selling' : (sold ? 'row-sold' : '')} ${isFocused ? 'futgg-row-focused' : ''}`.trim();
             html += `
-                <tr class="${rowClass}">
+                <tr class="${rowClass}" data-eaid="${eaId}" id="futgg-row-${eaId}">
                     <td>
                         <div class="futgg-player-cell">
                             <span class="futgg-rating">${gem.rating || '---'}</span>
@@ -3321,6 +3344,16 @@
 
         html += `</tbody></table>`;
         container.innerHTML = html;
+
+        // Mantener foco visual y scroll hacia la carta activa si se reordenó la tabla
+        if (State.focusedGemId) {
+            const targetRow = container.querySelector(`tr[data-eaid="${State.focusedGemId}"]`);
+            if (targetRow) {
+                try {
+                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } catch (e) { }
+            }
+        }
     }
 
     // Auto-actualización periódica de tiempos restantes en vivo cada 15s si el panel está visible
