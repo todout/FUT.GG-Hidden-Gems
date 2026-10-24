@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.2
+// @version      1.10.3
 // @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción automática de cartas SBC (bronces y platas caros), verificación inteligente en vivo con rotación anti-caché de EA, detección de snipes y listador seguro.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -1185,7 +1185,7 @@
         futbinSbcData: null,   // Datos de soluciones SBC cargadas de FUTBIN
         futbinFilterOnlyBronzeSilver: true, // Filtro prioritario: sólo bronces y platas
         futbinFilterOnlyInClub: false, // Por defecto mostrar todas las cartas del SBC (se puede filtrar a sólo en club)
-        futbinFilterHideMinimum: true, // Filtro: ocultar cartas que están a precio mínimo de descarte
+        futbinFilterHideMinimum: false, // Por defecto ver todas las cartas (no ocultar automáticamente)
         futbinSolutionsCount: 5, // Cantidad de soluciones analizadas por defecto (5)
         gems: [],              // Lista de cartas de FUT.GG
         clubMatches: {},       // eaId -> ItemData del club
@@ -1760,6 +1760,40 @@
                 }
             }
 
+            // Verificación inteligente de piso real anti-orden de expiración de EA:
+            // En EA FC, la API de mercado siempre devuelve cartas ordenadas por tiempo de expiración (ending soonest),
+            // NO por precio de Compra Ya. Si obtuvimos una página llena (>= 21 cartas) o venimos de búsqueda abierta,
+            // cartas a precio de descarte (200-400) que expiran en 50 min quedan ocultas detrás de cartas a 1500 que expiran en 5 min.
+            // Verificamos si existen cartas más baratas que el precio mínimo aparente para encontrar el piso real:
+            if (allItems.length > 0 && !forceOpen) {
+                const tempLowest = Math.min(...allItems.map(it => (it._auction && it._auction.buyNowPrice) || it.buyNowPrice || 9999999));
+                if (tempLowest > 250 && (allItems.length >= 21 || stage === 3 || estPrice <= 0)) {
+                    const step = getBidStep(tempLowest);
+                    const checkMaxBuy = Math.max(200, tempLowest - step);
+                    console.log(`[FUT.GG Helper] 🔍 Verificando si existen cartas más baratas bajo ${formatCoins(tempLowest)} para ${gem.name} (maxBuy: ${checkMaxBuy})...`);
+
+                    const subCriteria = createSearchCriteria(eaId);
+                    subCriteria.count = 21;
+                    subCriteria.type = (win.SearchType && win.SearchType.PLAYER) || 'player';
+                    subCriteria.defId = [eaId];
+                    subCriteria.maskedDefId = eaId;
+                    subCriteria.maxBuy = checkMaxBuy;
+                    subCriteria.__futggCustomBusted = true;
+
+                    await randomDelay(1000, 1500);
+                    const subRes = await callEAService(services.Item.searchTransferMarket(subCriteria, 1));
+                    const subPageItems = extractItemsFromEaResponse(subRes);
+                    const subValidItems = (subPageItems || []).filter(it => matchesCard(it, eaId, gem.name));
+                    if (subValidItems.length > 0) {
+                        allItems = subValidItems;
+                        filterLabel = `≤ ${formatCoins(checkMaxBuy)} (piso verificado)`;
+                        console.log(`[FUT.GG Helper] 🟢 ¡Piso más barato encontrado! ${subValidItems.length} cartas a ${filterLabel}`);
+                    } else {
+                        console.log(`[FUT.GG Helper] ✅ Confirmado: 0 cartas bajo ${formatCoins(checkMaxBuy)}. El piso real inicia en ${formatCoins(tempLowest)}.`);
+                    }
+                }
+            }
+
             if (allItems.length === 0) {
                 State.marketPrices[eaId] = {
                     lowestBin: null,
@@ -1938,7 +1972,7 @@
             item.pile = pile;
             delete State.clubMatches[eaId];
             State.transferMatches[eaId] = item;
-            renderGemsTable();
+            renderCurrentTable();
             if (!silent) notificar(`📋 ${gem.name} movido a la Lista de Transferibles`, "#00ff88");
             return true;
         } catch (err) {
@@ -1951,7 +1985,7 @@
                 item.pile = pile;
                 State.transferMatches[eaId] = item;
                 delete State.clubMatches[eaId];
-                renderGemsTable();
+                renderCurrentTable();
                 if (!silent) notificar(`📋 ${gem.name} ya registrado en Transferibles`, "#00ccff");
                 return true;
             }
@@ -2009,7 +2043,7 @@
                 buyNow: validBuyNow
             };
             State.marketPrices[eaId] = { listed: true, price: validBuyNow };
-            renderGemsTable();
+            renderCurrentTable();
             notificar(`🚀 ¡${gem.name} listado por ${formatCoins(validBuyNow)}! (Puja: ${formatCoins(startBid)})`, "#00ff88");
         } catch (err) {
             console.error("Error al listar:", err);
@@ -2158,6 +2192,7 @@
             }
             // 3. Filtro Ocultar Precio Mínimo (si ya fue consultado y está a descarte)
             if (State.futbinFilterHideMinimum) {
+                if (Number(State.focusedGemId) === eaId) return true; // Nunca ocultar la carta bajo interacción activa
                 const market = State.marketPrices[eaId];
                 if (market && !market.error && !market.loading && isMinimumPrice(p, market)) {
                     return false;
@@ -3522,7 +3557,7 @@
                         <span>En Mi Club</span>
                     </label>
                     <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Ocultar cartas que están a precio mínimo de descarte (no rentables para vender)">
-                        <input type="checkbox" id="futbin-filter-hide-minimum" checked style="cursor:pointer; accent-color:#00ff88;" />
+                        <input type="checkbox" id="futbin-filter-hide-minimum" style="cursor:pointer; accent-color:#00ff88;" />
                         <span>Ocultar precio mín.</span>
                     </label>
                 </div>
@@ -4057,7 +4092,7 @@
         const step = getBidStep(current);
         const nextPrice = direction > 0 ? current + step : Math.max(200, current - step);
         State.customPrices[eaId] = roundToValidBid(nextPrice, direction > 0 ? 'up' : 'down');
-        renderGemsTable();
+        renderCurrentTable();
     }
 
     function renderGemsTable() {
@@ -4569,6 +4604,13 @@
 
             const marketA = State.marketPrices[eaIdA];
             const marketB = State.marketPrices[eaIdB];
+            const isMinA = marketA && !marketA.error && !marketA.loading && isMinimumPrice(a, marketA);
+            const isMinB = marketB && !marketB.error && !marketB.loading && isMinimumPrice(b, marketB);
+
+            // Si una carta ya fue consultada y está a precio mínimo de descarte, mandarla al fondo de las disponibles
+            if (!isMinA && isMinB) return -1;
+            if (isMinA && !isMinB) return 1;
+
             const priceA = marketA && !marketA.error ? (marketA.hasOutlier ? marketA.realisticBin : (marketA.lowestBin || 0)) : (a.futbinPrice || 0);
             const priceB = marketB && !marketB.error ? (marketB.hasOutlier ? marketB.realisticBin : (marketB.lowestBin || 0)) : (b.futbinPrice || 0);
 
@@ -4586,11 +4628,11 @@
             <table class="futgg-table">
                 <thead>
                     <tr>
-                        <th style="width:24%;">Jugador SBC</th>
-                        <th style="width:14%;">En Mi Club</th>
-                        <th style="width:14%;">Frecuencia SBC</th>
-                        <th style="width:12%;">Est. FUTBIN</th>
-                        <th style="width:18%;">Mercado Real (EA)</th>
+                        <th style="width:20%;">Jugador SBC</th>
+                        <th style="width:13%;">En Mi Club</th>
+                        <th style="width:13%;">Frecuencia SBC</th>
+                        <th style="width:10%;">Est. FUTBIN</th>
+                        <th style="width:26%;">Mercado Real (EA)</th>
                         <th style="width:10%;">Listar Por</th>
                         <th style="width:8%; text-align:center;">Acción</th>
                     </tr>
@@ -4647,8 +4689,10 @@
             let marketHtml = '';
             if (!market) {
                 marketHtml = `
-                    <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="check-market" data-eaid="${eaId}" title="Buscar en mercado con filtro progresivo">🔍 Consultar</button>
-                    <button class="futgg-btn" style="padding:4px 6px; font-size:10px; color:#8fa0b5;" data-action="search-market-open" data-eaid="${eaId}" title="Búsqueda abierta sin tope de precio">🌐 Sin tope</button>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                        <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="check-market" data-eaid="${eaId}" title="Buscar en mercado con filtro progresivo">🔍 Consultar</button>
+                        <button class="futgg-btn" style="padding:4px 6px; font-size:10px; color:#8fa0b5;" data-action="search-market-open" data-eaid="${eaId}" title="Búsqueda abierta sin tope de precio">🌐 Sin tope</button>
+                    </div>
                 `;
             } else if (market.loading || market.crawling) {
                 marketHtml = `
@@ -4665,65 +4709,91 @@
                 `;
             } else if (market.isExtinct) {
                 marketHtml = `
-                    <span class="futgg-tag extinct">🔥 EXTINTA</span>
-                    <div style="font-size:10px; color:#ff5555; margin-top:2px;">Sin cartas en el mercado</div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span class="futgg-tag extinct" title="No hay cartas activas en el mercado">💎 ¡Extinta! (0 listadas)</span>
+                        <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Reintentar">🔄</button>
+                    </div>
                 `;
-            } else {
-                const bin = market.hasOutlier ? market.realisticBin : market.lowestBin;
+            } else if (market.lowestBin) {
+                const isBreakdownOpen = !!State.openPriceBreakdowns[eaId];
+                const diff = (market.hasOutlier ? market.realisticBin : market.lowestBin) - (p.estimatedPrice || p.futbinPrice || 0);
+                const diffColor = diff >= 0 ? '#00ff88' : '#ff5555';
+                const hasMore = market.hasMore;
                 const isMin = isMinimumPrice(p, market);
                 const isInflated = isInflatedGem(p, market);
 
-                let statusBadge = '';
-                if (isMin) {
-                    statusBadge = `<span class="futgg-tag none" style="border:1px solid #ffaa00; color:#ffaa00; font-weight:700;">⚠️ Precio Mínimo</span>`;
-                } else if (isInflated) {
-                    statusBadge = `<span class="futgg-tag club" style="border:1px solid #00ff88; color:#00ff88; font-weight:800;">🔥 ¡GEMA INFLADA!</span>`;
-                } else {
-                    statusBadge = `<span class="futgg-tag none">✓ Normal</span>`;
-                }
-
-                marketHtml = `
-                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
-                        <span style="font-weight:800; color:${isInflated ? '#00ff88' : (isMin ? '#ffaa00' : '#fff')}; font-size:13px;">
-                            ${formatCoins(bin)}
-                        </span>
-                        ${statusBadge}
-                    </div>
-                    <div style="font-size:10px; color:#8fa0b5; margin-top:2px; display:flex; align-items:center; justify-content:space-between;">
-                        <span>Muestra: ${market.count || 0} cartas (${market.filterLabel || ''})</span>
-                        <a href="javascript:void(0)" data-action="toggle-breakdown" data-eaid="${eaId}" style="color:#00ccff; text-decoration:none; font-weight:600;">
-                            ${State.openPriceBreakdowns[eaId] ? '▲ Ocultar' : '▼ Desglose'}
-                        </a>
-                    </div>
-                `;
-
-                // Desglose interactivo si está abierto
-                if (State.openPriceBreakdowns[eaId] && market.tiers && market.tiers.length > 0) {
-                    marketHtml += `
+                let breakdownHtml = '';
+                if (isBreakdownOpen && market.tiers && market.tiers.length > 0) {
+                    breakdownHtml = `
                         <div class="futgg-price-breakdown">
                             <div class="futgg-breakdown-header">
-                                <span>DISTRIBUCIÓN DE PRECIOS (${market.tiers.length} NIVELES)</span>
-                                <span>TOTAL: ${market.count}</span>
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <span>Cartas analizadas: <b>${market.count}${hasMore ? '+' : ''}</b></span>
+                                    ${market.filterLabel ? `<span style="font-size:10px; color:#38bdf8;">🎯 Filtro: <b>${market.filterLabel}</b></span>` : ''}
+                                </div>
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    ${market.filterType !== 'open' ? `<button class="futgg-btn" style="padding:1px 6px; font-size:9px; border-color:#38bdf8; color:#38bdf8;" data-action="search-market-open" data-eaid="${eaId}" title="Buscar en todo el mercado sin tope de precio">🌐 Sin tope</button>` : ''}
+                                    <button class="futgg-btn" style="padding:1px 5px; font-size:9px;" data-action="open-in-webapp" data-eaid="${eaId}" title="Abrir en pantalla completa de EA">👁️ EA</button>
+                                    <button class="futgg-btn" style="padding:1px 6px; font-size:9px; border-color:#ff5555; color:#ff7777;" data-action="toggle-breakdown" data-eaid="${eaId}" title="Comprimir lista">▲ Cerrar</button>
+                                </div>
                             </div>
-                            ${market.hasOutlier ? `<div class="futgg-outlier-box">${market.outlierReason}</div>` : ''}
+                            ${market.hasOutlier ? `
+                                <div class="futgg-outlier-box">
+                                    ⚠️ <b>Posible ganga/error:</b> 1 carta a ${formatCoins(market.lowestBin)}. El piso real es <b>${formatCoins(market.realisticBin)}</b>.
+                                </div>
+                            ` : ''}
                             <div class="futgg-tiers-container">
                                 ${market.tiers.map(t => {
-                                    const isSelected = State.customPrices[eaId] === t.price;
-                                    const isOutlierTier = t.isOutlier;
+                                    const isSel = State.customPrices[eaId] === t.price;
                                     return `
-                                        <div class="futgg-tier-row ${isSelected ? 'selected' : ''} ${isOutlierTier ? 'outlier' : ''}" data-action="pick-price" data-eaid="${eaId}" data-price="${t.price}" title="Clic para elegir vender a ${formatCoins(t.price)}">
-                                            <span style="font-weight:700; color:${isOutlierTier ? '#ffaa00' : '#ffffff'};">${formatCoins(t.price)}</span>
+                                        <div class="futgg-tier-row ${t.isOutlier ? 'outlier' : ''} ${isSel ? 'selected' : ''}" data-action="pick-price" data-eaid="${eaId}" data-price="${t.price}" title="Clic para elegir vender a ${formatCoins(t.price)}">
+                                            <span style="font-weight:700; color:#fff;">${formatCoins(t.price)}</span>
                                             <div style="display:flex; align-items:center; gap:6px;">
-                                                <span class="futgg-tier-badge ${isOutlierTier ? '' : 'safe'}">${t.count} carta(s)</span>
-                                                ${isOutlierTier ? '<span style="font-size:9px; color:#ffaa00;">(Ganga)</span>' : ''}
+                                                <span style="color:#8fa0b5; font-size:10px;">${t.count} ${t.count === 1 ? 'carta' : 'cartas'}</span>
+                                                ${t.isOutlier ? '<span class="futgg-tier-badge">⚠️ Snipe</span>' : ''}
+                                                ${t.price === market.realisticBin && market.hasOutlier ? '<span class="futgg-tier-badge safe">⭐ Real</span>' : ''}
+                                                ${isSel ? '<span style="color:#00ff88; font-size:10px;">✔</span>' : ''}
                                             </div>
                                         </div>
                                     `;
                                 }).join('')}
                             </div>
+                            <button class="futgg-btn" style="width:100%; margin-top:6px; padding:4px 0; font-size:10px; justify-content:center; background:#182434; border:1px solid #33475f; color:#cbd5e1; cursor:pointer;" data-action="toggle-breakdown" data-eaid="${eaId}" title="Comprimir lista de precios">▲ Comprimir lista de precios</button>
                         </div>
                     `;
                 }
+
+                marketHtml = `
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                            <div>
+                                ${market.hasOutlier
+                                    ? `<div><span style="font-size:10px; color:#ffaa00;">⚠️ Mín: ${formatCoins(market.lowestBin)} (1)</span></div><b style="color:#00ff88;">Piso Real: ${formatCoins(market.realisticBin)}</b>`
+                                    : `<b style="color:${isInflated ? '#00ff88' : (isMin ? '#ffaa00' : '#fff')}; font-size:13px;">Min BIN: ${formatCoins(market.lowestBin)}</b>`
+                                }
+                                <div style="font-size:10px; color:#8fa0b5; display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-top:2px;">
+                                    <span>${market.count}${hasMore ? '+' : ''} activas ${market.filterLabel ? `<span style="color:#38bdf8;">(${market.filterLabel})</span>` : ''}</span>
+                                    ${isMin ? '<span class="futgg-tag none" style="border:1px solid #ffaa00; color:#ffaa00; font-weight:700;">⚠️ Precio Mínimo</span>' : ''}
+                                    ${isInflated ? '<span class="futgg-tag club" style="border:1px solid #00ff88; color:#00ff88; font-weight:800;">🔥 ¡GEMA INFLADA!</span>' : ''}
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
+                                <button class="futgg-btn" style="padding:4px 8px; font-size:12px;" data-action="check-market" data-eaid="${eaId}" title="Actualizar mercado (automático)">🔄</button>
+                                <button class="futgg-btn" style="padding:2px 6px; font-size:9px; white-space:nowrap; ${isBreakdownOpen ? 'border-color:#ffaa00; color:#ffaa00;' : ''}" data-action="toggle-breakdown" data-eaid="${eaId}" title="${isBreakdownOpen ? 'Comprimir lista' : 'Ver desglose de precios'}">
+                                    ${isBreakdownOpen ? '▲ Comprimir' : `▼ Ver ${market.tiers.length}`}
+                                </button>
+                            </div>
+                        </div>
+                        ${breakdownHtml}
+                    </div>
+                `;
+            } else {
+                marketHtml = `
+                    <div style="display:flex; gap:4px; align-items:center;">
+                        <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="check-market" data-eaid="${eaId}">🔍 Consultar</button>
+                        <button class="futgg-btn" style="padding:4px 6px; font-size:10px; color:#8fa0b5;" data-action="search-market-open" data-eaid="${eaId}">🌐 Sin tope</button>
+                    </div>
+                `;
             }
 
             // Columna Precio de Venta
@@ -4805,7 +4875,7 @@
                     <td>${clubStatusHtml}</td>
                     <td>${freqHtml}</td>
                     <td>
-                        <div style="font-weight:700; color:#ffcc00;">${formatCoins(p.futbinPrice || 0)}</div>
+                        <div style="font-weight:700; color:#ffcc00;">${p.futbinPrice > 0 ? formatCoins(p.futbinPrice) : `<span style="color:#8fa0b5; font-size:11px;" title="Sin precio en FUTBIN">Sin precio</span>`}</div>
                     </td>
                     <td>${marketHtml}</td>
                     <td>${priceColHtml}</td>
