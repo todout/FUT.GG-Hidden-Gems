@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.1
+// @version      1.10.2
 // @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción automática de cartas SBC (bronces y platas caros), verificación inteligente en vivo con rotación anti-caché de EA, detección de snipes y listador seguro.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -509,72 +509,110 @@
                 return getSolutionUrls(limit);
             }
 
-            function parsePlayersFromSquadDoc(doc, squadIndex = 1) {
+            function parsePlayersFromSquadDoc(doc, htmlText = '', squadIndex = 1) {
                 const players = [];
-                const cardContainers = Array.from(doc.querySelectorAll('.player-draggable, .playercard-field, a[href*="/27/player/"]'));
                 const seenInThisSquad = new Set();
 
-                for (const el of cardContainers) {
-                    const img = el.querySelector('img[src*="/players/"]') || (el.tagName === 'IMG' && el.src.includes('/players/') ? el : null);
-                    let eaId = null;
-                    if (img && img.src) {
-                        const match = img.src.match(/\/players\/(\d+)\.png/i);
-                        if (match) eaId = Number(match[1]);
-                    }
-
-                    if (!eaId) {
-                        const link = el.closest('a[href*="/27/player/"]') || el.querySelector('a[href*="/27/player/"]');
-                        if (link && link.href) {
-                            const mLink = link.href.match(/\/27\/player\/(\d+)/i);
-                            if (mLink) eaId = Number(mLink[1]);
+                // 1. Si el DOM está renderizado (document activo), extraer de elementos HTML
+                if (doc) {
+                    const cardContainers = Array.from(doc.querySelectorAll('.player-draggable, .playercard-field, a[href*="/27/player/"]'));
+                    for (const el of cardContainers) {
+                        const img = el.querySelector('img[src*="/players/"]') || (el.tagName === 'IMG' && el.src.includes('/players/') ? el : null);
+                        let eaId = null;
+                        if (img && img.src) {
+                            const match = img.src.match(/\/players\/(\d+)\.png/i);
+                            if (match) eaId = Number(match[1]);
                         }
-                    }
 
-                    if (!eaId || seenInThisSquad.has(eaId)) continue;
-                    seenInThisSquad.add(eaId);
-
-                    const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
-                    let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
-
-                    const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
-                    let rating = 0;
-                    if (ratingEl) {
-                        const rMatch = ratingEl.textContent.match(/\d+/);
-                        if (rMatch) rating = parseInt(rMatch[0], 10);
-                    }
-
-                    const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
-                    const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
-
-                    const priceEl = el.querySelector('.price-segment, .player-price, .price');
-                    let futbinPrice = 0;
-                    if (priceEl) {
-                        const pText = priceEl.textContent.replace(/,/g, '').replace(/🪙/g, '').trim();
-                        const pMatch = pText.match(/(\d+(\.\d+)?[kKmM]?)/);
-                        if (pMatch) {
-                            const rawVal = pMatch[1].toLowerCase();
-                            if (rawVal.endsWith('k')) futbinPrice = Math.round(parseFloat(rawVal) * 1000);
-                            else if (rawVal.endsWith('m')) futbinPrice = Math.round(parseFloat(rawVal) * 1000000);
-                            else futbinPrice = parseInt(rawVal, 10);
+                        if (!eaId) {
+                            const link = el.closest('a[href*="/27/player/"]') || el.querySelector('a[href*="/27/player/"]');
+                            if (link && link.href) {
+                                const mLink = link.href.match(/\/27\/player\/(\d+)/i);
+                                if (mLink) eaId = Number(mLink[1]);
+                            }
                         }
-                    }
 
-                    let quality = 'gold';
-                    if (rating > 0) {
-                        if (rating <= 64) quality = 'bronze';
-                        else if (rating <= 74) quality = 'silver';
-                        else quality = 'gold';
-                    }
+                        if (!eaId || seenInThisSquad.has(eaId)) continue;
+                        seenInThisSquad.add(eaId);
 
-                    players.push({
-                        eaId: eaId,
-                        name: name || `Jugador #${eaId}`,
-                        rating: rating,
-                        position: position,
-                        quality: quality,
-                        futbinPrice: futbinPrice,
-                        squadIndex: squadIndex
-                    });
+                        const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
+                        let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
+
+                        const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
+                        let rating = 0;
+                        if (ratingEl) {
+                            const rMatch = ratingEl.textContent.match(/\d+/);
+                            if (rMatch) rating = parseInt(rMatch[0], 10);
+                        }
+
+                        const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
+                        const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
+
+                        const priceEl = el.querySelector('.price-segment, .player-price, .price');
+                        let futbinPrice = 0;
+                        if (priceEl) {
+                            const pText = priceEl.textContent.replace(/,/g, '').replace(/🪙/g, '').trim();
+                            const pMatch = pText.match(/(\d+(\.\d+)?[kKmM]?)/);
+                            if (pMatch) {
+                                const rawVal = pMatch[1].toLowerCase();
+                                if (rawVal.endsWith('k')) futbinPrice = Math.round(parseFloat(rawVal) * 1000);
+                                else if (rawVal.endsWith('m')) futbinPrice = Math.round(parseFloat(rawVal) * 1000000);
+                                else futbinPrice = parseInt(rawVal, 10);
+                            }
+                        }
+
+                        let quality = 'gold';
+                        if (rating > 0) {
+                            if (rating <= 64) quality = 'bronze';
+                            else if (rating <= 74) quality = 'silver';
+                            else quality = 'gold';
+                        }
+
+                        players.push({
+                            eaId: eaId,
+                            name: name || `Jugador #${eaId}`,
+                            rating: rating,
+                            position: position,
+                            quality: quality,
+                            futbinPrice: futbinPrice,
+                            squadIndex: squadIndex
+                        });
+                    }
+                }
+
+                // 2. Si el DOM no tenía elementos renderizados (HTML estático de fetch), extraer de datos JSON embebidos
+                if (players.length === 0 && htmlText) {
+                    const regex = /"position":\{"value":"([^"]+)"\},"playerName":"([^"]+)"[\s\S]*?\/players\/(\d+)\.png[\s\S]*?"rating":\s*"?(\d+)"?/g;
+                    let m;
+                    while ((m = regex.exec(htmlText)) !== null) {
+                        const pos = m[1];
+                        const name = m[2];
+                        const eaId = Number(m[3]);
+                        const rating = parseInt(m[4], 10) || 0;
+
+                        if (!eaId || seenInThisSquad.has(eaId)) continue;
+                        seenInThisSquad.add(eaId);
+
+                        // Buscar precio aproximado en la ventana JSON subsiguiente
+                        let futbinPrice = 0;
+                        const snippet = htmlText.substring(m.index, m.index + 8000);
+                        const priceMatch = snippet.match(/"(?:psPrice|price|pcPrice)":\s*(\d+)/i);
+                        if (priceMatch) {
+                            futbinPrice = parseInt(priceMatch[1], 10) || 0;
+                        }
+
+                        const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
+
+                        players.push({
+                            eaId: eaId,
+                            name: name || `Jugador #${eaId}`,
+                            rating: rating,
+                            position: pos,
+                            quality: quality,
+                            futbinPrice: futbinPrice,
+                            squadIndex: squadIndex
+                        });
+                    }
                 }
 
                 return players;
@@ -656,19 +694,21 @@
                         if (autoBanner) autoBanner.innerHTML = `Descargando solución (${i + 1}/${solutionUrls.length})...`;
 
                         let doc = null;
+                        let html = '';
                         if (isIndividualSquad && i === 0) {
                             doc = document;
+                            html = document.documentElement ? document.documentElement.outerHTML : '';
                         } else {
                             const resp = await fetch(url, { credentials: 'include' });
                             if (!resp.ok) {
                                 console.warn(`[FUTBIN SBC Helper] HTTP ${resp.status} al descargar solución: ${url}`);
                                 continue;
                             }
-                            const html = await resp.text();
+                            html = await resp.text();
                             doc = parser.parseFromString(html, 'text/html');
                         }
 
-                        const squadPlayers = parsePlayersFromSquadDoc(doc, i + 1);
+                        const squadPlayers = parsePlayersFromSquadDoc(doc, html, i + 1);
                         for (const p of squadPlayers) {
                             if (!playerMap.has(p.eaId)) {
                                 playerMap.set(p.eaId, {
@@ -1144,7 +1184,7 @@
         activeTab: 'futgg',    // 'futgg' | 'futbin'
         futbinSbcData: null,   // Datos de soluciones SBC cargadas de FUTBIN
         futbinFilterOnlyBronzeSilver: true, // Filtro prioritario: sólo bronces y platas
-        futbinFilterOnlyInClub: true, // Filtro prioritario: sólo los que están en el club o transferibles
+        futbinFilterOnlyInClub: false, // Por defecto mostrar todas las cartas del SBC (se puede filtrar a sólo en club)
         futbinFilterHideMinimum: true, // Filtro: ocultar cartas que están a precio mínimo de descarte
         futbinSolutionsCount: 5, // Cantidad de soluciones analizadas por defecto (5)
         gems: [],              // Lista de cartas de FUT.GG
@@ -3478,7 +3518,7 @@
                         <span>Bronces / Platas</span>
                     </label>
                     <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Mostrar únicamente jugadores que tienes en tu Club o Transferibles">
-                        <input type="checkbox" id="futbin-filter-in-club" checked style="cursor:pointer; accent-color:#00ff88;" />
+                        <input type="checkbox" id="futbin-filter-in-club" style="cursor:pointer; accent-color:#00ff88;" />
                         <span>En Mi Club</span>
                     </label>
                     <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Ocultar cartas que están a precio mínimo de descarte (no rentables para vender)">
@@ -3566,12 +3606,13 @@
             futbinReloadBtn.onclick = () => {
                 try {
                     const latest = GM_getValue('futbin_sbc_data', null);
-                    if (latest) {
+                    if (latest && latest.players && latest.players.length > 0) {
                         State.futbinSbcData = latest;
-                        notificar(`🟢 Soluciones del SBC "${latest.challengeTitle}" cargadas`, "#00ff88");
+                        notificar(`🟢 Soluciones del SBC "${latest.challengeTitle}" cargadas (${latest.players.length} jugadores)`, "#00ff88");
                         renderFutbinSbcTable();
+                        scanClubForFutbinPlayers();
                     } else {
-                        notificar("No hay datos de FUTBIN guardados aún", "#ffaa00");
+                        notificar("No hay datos de soluciones válidos guardados aún de FUTBIN", "#ffaa00");
                     }
                 } catch (e) { }
             };
