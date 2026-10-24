@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.4
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción automática de cartas SBC (bronces y platas caros), verificación inteligente en vivo con rotación anti-caché de EA, detección de snipes, soporte para cartas extintas (90% máx) y listador seguro.
+// @version      1.10.5
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: precios de FUT.GG, rangos máximos seguros para bronces (5k/10k al 90%), verificación inteligente con rotación anti-caché y UI optimizada.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -334,6 +334,9 @@
     // =========================================================================
     if (window.location.hostname.includes('futbin.com')) {
         function initFutbinSbcModule() {
+            if (window.__futbinSbcInitialized || document.getElementById('futbin-sbc-widget')) return;
+            window.__futbinSbcInitialized = true;
+
             console.log("%c[FC 27 Helper] 🧩 Módulo FUTBIN SBC activo en:", "color:#00ff88; font-weight:bold;", window.location.href);
 
             // Inyectar estilos para el widget flotante en FUTBIN
@@ -356,6 +359,15 @@
                     backdrop-filter: blur(12px);
                     user-select: none;
                     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+                #futbin-sbc-widget.auto-sync-centered {
+                    top: 50% !important;
+                    left: 50% !important;
+                    right: auto !important;
+                    bottom: auto !important;
+                    transform: translate(-50%, -50%) !important;
+                    z-index: 99999999 !important;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.95), 0 0 40px rgba(0, 255, 136, 0.5) !important;
                 }
                 #futbin-sbc-widget:hover {
                     box-shadow: 0 12px 45px rgba(0, 0, 0, 0.9), 0 0 25px rgba(0, 255, 136, 0.5);
@@ -515,9 +527,10 @@
 
                 // 1. Si el DOM está renderizado (document activo), extraer de elementos HTML
                 if (doc) {
-                    const cardContainers = Array.from(doc.querySelectorAll('.player-draggable, .playercard-field, a[href*="/27/player/"]'));
-                    for (const el of cardContainers) {
-                        const img = el.querySelector('img[src*="/players/"]') || (el.tagName === 'IMG' && el.src.includes('/players/') ? el : null);
+                    const cardContainers = Array.from(doc.querySelectorAll('.player-draggable, .playercard-field, .squad-player, a[href*="/27/player/"], a[href*="/player/"]'));
+                    for (const rawEl of cardContainers) {
+                        const el = rawEl.closest('.player-draggable, .playercard-field, .squad-player') || rawEl;
+                        const img = el.querySelector('img[src*="/players/"]') || (rawEl.tagName === 'IMG' && rawEl.src.includes('/players/') ? rawEl : null);
                         let eaId = null;
                         if (img && img.src) {
                             const match = img.src.match(/\/players\/(\d+)\.png/i);
@@ -525,9 +538,9 @@
                         }
 
                         if (!eaId) {
-                            const link = el.closest('a[href*="/27/player/"]') || el.querySelector('a[href*="/27/player/"]');
+                            const link = el.querySelector('a[href*="/player/"]') || rawEl.closest('a[href*="/player/"]');
                             if (link && link.href) {
-                                const mLink = link.href.match(/\/27\/player\/(\d+)/i);
+                                const mLink = link.href.match(/\/player\/(\d+)/i);
                                 if (mLink) eaId = Number(mLink[1]);
                             }
                         }
@@ -548,7 +561,7 @@
                         const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
                         const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
 
-                        const priceEl = el.querySelector('.price-segment, .player-price, .price');
+                        const priceEl = el.querySelector('.price-segment, .player-price, .platform-price-wrapper-small, .price') || rawEl.querySelector('.price-segment, .player-price, .price');
                         let futbinPrice = 0;
                         if (priceEl) {
                             const pText = priceEl.textContent.replace(/,/g, '').replace(/🪙/g, '').trim();
@@ -558,6 +571,17 @@
                                 if (rawVal.endsWith('k')) futbinPrice = Math.round(parseFloat(rawVal) * 1000);
                                 else if (rawVal.endsWith('m')) futbinPrice = Math.round(parseFloat(rawVal) * 1000000);
                                 else futbinPrice = parseInt(rawVal, 10);
+                            }
+                        }
+
+                        // Si no se encontró precio en el DOM pero tenemos htmlText, buscar en el fragmento JSON
+                        if (futbinPrice === 0 && htmlText) {
+                            const eaStr = String(eaId);
+                            const pos = htmlText.indexOf(eaStr);
+                            if (pos !== -1) {
+                                const snippet = htmlText.substring(Math.max(0, pos - 500), Math.min(htmlText.length, pos + 1000));
+                                const pMatch = snippet.match(/"(?:psPrice|price|pcPrice|bin)":\s*"?(\d+)"?/i) || snippet.match(/data-price="?(\d+)"?/i);
+                                if (pMatch) futbinPrice = parseInt(pMatch[1], 10) || 0;
                             }
                         }
 
@@ -596,7 +620,7 @@
                         // Buscar precio aproximado en la ventana JSON subsiguiente
                         let futbinPrice = 0;
                         const snippet = htmlText.substring(m.index, m.index + 8000);
-                        const priceMatch = snippet.match(/"(?:psPrice|price|pcPrice)":\s*(\d+)/i);
+                        const priceMatch = snippet.match(/"(?:psPrice|price|pcPrice|bin)":\s*"?(\d+)"?/i) || snippet.match(/data-price="?(\d+)"?/i);
                         if (priceMatch) {
                             futbinPrice = parseInt(priceMatch[1], 10) || 0;
                         }
@@ -633,7 +657,7 @@
                     SBC: <b style="color:#00ff88;">${challengeTitle}</b><br/>
                     <span style="font-size:11px; color:#8fa0b5;">Extrae jugadores requeridos (bronces y platas caros) y envíalos a la Web App para buscar en tu club.</span>
                 </div>
-                <div class="futbin-sbc-controls">
+                <div class="futbin-sbc-controls" id="futbin-sbc-controls-row">
                     ${!isIndividualSquad ? `
                         <label style="font-size:11px; color:#8fa0b5;">Top:</label>
                         <select id="futbin-sbc-count-select" class="futbin-sbc-select">
@@ -661,20 +685,16 @@
 
             async function extractAndSyncSbcSolutions(count, isAutoSync = false) {
                 if (syncBtn) syncBtn.disabled = true;
+                const controlsRow = document.getElementById('futbin-sbc-controls-row');
+                if (isAutoSync) {
+                    widget.classList.add('auto-sync-centered');
+                    if (controlsRow) controlsRow.style.display = 'none';
+                }
                 if (progressEl) {
                     progressEl.style.display = 'block';
-                    progressEl.textContent = `Analizando soluciones...`;
+                    progressEl.innerHTML = `<span style="font-size:13px; font-weight:800; color:#00ccff;">🧩 Sincronizando con EA Web App...</span><br/><span id="futbin-sbc-substatus" style="font-size:11px; color:#cbd5e1;">Buscando ${count} soluciones...</span>`;
                 }
                 if (resultEl) resultEl.style.display = 'none';
-
-                let autoBanner = null;
-                if (isAutoSync) {
-                    autoBanner = document.createElement('div');
-                    autoBanner.id = 'futbin-sbc-auto-banner';
-                    autoBanner.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999999;background:#101924;color:#fff;padding:12px 24px;border-radius:12px;font-family:sans-serif;font-size:13px;font-weight:700;box-shadow:0 8px 30px rgba(0,0,0,0.85);border:2px solid #00ccff;text-align:center;transition:all 0.3s ease;';
-                    autoBanner.innerHTML = `🧩 Sincronizando ${count} soluciones con EA Web App...`;
-                    document.body.appendChild(autoBanner);
-                }
 
                 try {
                     const solutionUrls = await waitForSolutionUrls(count);
@@ -682,16 +702,15 @@
                         throw new Error("No se encontraron soluciones en esta página de FUTBIN.");
                     }
 
-                    if (progressEl) progressEl.textContent = `Analizando 0/${solutionUrls.length} soluciones...`;
-                    if (autoBanner) autoBanner.innerHTML = `Descargando soluciones (0/${solutionUrls.length})...`;
+                    const subStatus = document.getElementById('futbin-sbc-substatus') || progressEl;
+                    subStatus.textContent = `Descargando soluciones (0/${solutionUrls.length})...`;
 
                     const playerMap = new Map();
                     const parser = new DOMParser();
 
                     for (let i = 0; i < solutionUrls.length; i++) {
                         const url = solutionUrls[i];
-                        if (progressEl) progressEl.textContent = `Descargando solución ${i + 1}/${solutionUrls.length}...`;
-                        if (autoBanner) autoBanner.innerHTML = `Descargando solución (${i + 1}/${solutionUrls.length})...`;
+                        if (subStatus) subStatus.textContent = `Descargando solución ${i + 1}/${solutionUrls.length}...`;
 
                         let doc = null;
                         let html = '';
@@ -770,30 +789,26 @@
                         resultEl.innerHTML = `
                             ✅ <b>¡${aggregatedPlayers.length} jugadores extraídos!</b><br/>
                             Analizadas <b>${solutionUrls.length} soluciones</b>.<br/>
+                            ${isAutoSync ? '<span style="color:#00ff88; font-size:11px; margin-top:4px; display:inline-block;">Sincronizado con éxito. Cerrando pestaña en 2s...</span>' : ''}
                             <a href="https://www.ea.com/ea-sports-fc/ultimate-team/web-app/" target="_blank" class="futbin-sbc-btn secondary" style="display:inline-flex; margin-top:8px; padding:5px 10px; font-size:11px;">
                                 🚀 Abrir EA Web App & Buscar
                             </a>
                         `;
                     }
 
-                    if (autoBanner) {
-                        autoBanner.style.borderColor = '#00ff88';
-                        autoBanner.innerHTML = `✅ ¡<b>${aggregatedPlayers.length} cartas extraídas</b>!<br/><span style="font-size:11px; color:#00ff88;">Sincronizado con EA Web App. Cerrando pestaña...</span>`;
+                    if (isAutoSync) {
                         setTimeout(() => {
                             try { window.close(); } catch (e) { }
-                        }, 1200);
+                        }, 1800);
                     }
                 } catch (err) {
                     console.error("[FUTBIN SBC Helper] Error:", err);
+                    if (controlsRow) controlsRow.style.display = 'flex';
                     if (progressEl) progressEl.style.display = 'none';
                     if (resultEl) {
                         resultEl.style.display = 'block';
                         resultEl.style.color = '#ff4444';
                         resultEl.textContent = `❌ Error: ${err.message}`;
-                    }
-                    if (autoBanner) {
-                        autoBanner.style.borderColor = '#ff4444';
-                        autoBanner.innerHTML = `❌ Error: ${err.message}`;
                     }
                 } finally {
                     if (syncBtn) syncBtn.disabled = false;
@@ -812,12 +827,16 @@
                 console.log(`[FC 27 Helper] 🚀 Auto-sync detectado desde EA Web App para ${autoCount} soluciones.`);
                 setTimeout(() => {
                     extractAndSyncSbcSolutions(autoCount, true);
-                }, 600);
+                }, 500);
             }
         }
 
-        window.addEventListener('load', () => setTimeout(initFutbinSbcModule, 1000));
-        setTimeout(initFutbinSbcModule, 1500);
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            setTimeout(initFutbinSbcModule, 400);
+        } else {
+            window.addEventListener('DOMContentLoaded', () => setTimeout(initFutbinSbcModule, 400));
+            window.addEventListener('load', () => setTimeout(initFutbinSbcModule, 800));
+        }
         return; // No ejecutar la UI de la Web App en la web de futbin.com
     }
 
@@ -1228,20 +1247,27 @@
         const numId = Number(eaId);
         const item = State.transferMatches[numId] || State.clubMatches[numId] || (State.sellingMatches[numId] && State.sellingMatches[numId].item);
         if (item) {
+            if (typeof item.getPriceLimits === 'function') {
+                try {
+                    const lim = item.getPriceLimits();
+                    if (lim && lim.maximum > 0) return lim.maximum;
+                } catch (e) { }
+            }
             if (item._itemPriceLimits && item._itemPriceLimits.maximum > 0) {
                 return item._itemPriceLimits.maximum;
             }
-            if (typeof item.hasPriceLimits === 'function' && item.hasPriceLimits()) {
-                if (item._itemPriceLimits && item._itemPriceLimits.maximum > 0) {
-                    return item._itemPriceLimits.maximum;
-                }
-            }
         }
-        // Fallback según calidad o rating si la carta aún no está en RAM
+        if (card) {
+            if (card.maxPrice && card.maxPrice > 0) return card.maxPrice;
+            if (card.futggMaxPrice && card.futggMaxPrice > 0) return card.futggMaxPrice;
+        }
+        // Fallback según calidad o rating si la carta aún no está en RAM:
+        // En EA FC 27, la inmensa mayoría de bronces tienen un techo de 5.000 monedas.
+        // Fijar 5.000 para bronces asegura que el 90% (4.500) nunca sobrepase el rango máximo ni sea rechazado por EA.
         const rating = card ? (card.rating || 0) : 0;
         const quality = card ? (card.quality || '') : '';
         if (quality === 'bronze' || (rating > 0 && rating <= 64)) {
-            return 10000;
+            return 5000;
         }
         if (quality === 'silver' || (rating >= 65 && rating <= 74)) {
             return 10000;
@@ -2090,27 +2116,38 @@
             return;
         }
 
+        // Consultar límites oficiales de precio en tiempo real a EA si están disponibles
+        if (services.Item && typeof services.Item.requestPriceLimits === 'function') {
+            try {
+                await callEAService(services.Item.requestPriceLimits([item]));
+            } catch (e) { }
+        }
+
+        const realMaxPrice = getItemMaxPrice(eaId, gem);
         const market = State.marketPrices[eaId];
         let buyNow = overridePrice || State.customPrices[eaId];
         if (!buyNow) {
             if (market && market.isExtinct) {
-                const maxPrice = getItemMaxPrice(eaId, gem);
-                buyNow = roundToValidBid(Math.round(maxPrice * 0.90), 'down');
+                buyNow = roundToValidBid(Math.round(realMaxPrice * 0.90), 'down');
             } else if (market && market.lowestBin) {
                 buyNow = Math.max(200, (market.hasOutlier ? market.realisticBin : market.lowestBin) - CONFIG.undercutAmount);
             } else {
-                buyNow = gem.estimatedPrice || (gem.futbinPrice || 1000);
+                buyNow = gem.futggPrice || gem.estimatedPrice || (gem.futbinPrice || 1000);
             }
         }
 
         // Si la carta está extinta, asegurarse de que NO exceda el 90% del precio máximo para evitar baneos de EA
         if (market && market.isExtinct) {
-            const maxPrice = getItemMaxPrice(eaId, gem);
-            const safeCap = roundToValidBid(Math.round(maxPrice * 0.90), 'down');
+            const safeCap = roundToValidBid(Math.round(realMaxPrice * 0.90), 'down');
             if (buyNow > safeCap) {
                 console.log(`[FUT.GG Helper] 🛡️ Ajustando precio de ${gem.name} extinto de ${buyNow} a ${safeCap} (90% del máx) para evitar baneo`);
                 buyNow = safeCap;
             }
+        }
+
+        // Asegurarse de que el precio de venta NUNCA supere el precio máximo real de la carta
+        if (realMaxPrice > 0 && buyNow > realMaxPrice) {
+            buyNow = realMaxPrice;
         }
 
         const validBuyNow = roundToValidBid(buyNow, 'down');
@@ -2363,6 +2400,7 @@
                 const latestSbc = GM_getValue('futbin_sbc_data', null);
                 if (latestSbc) State.futbinSbcData = latestSbc;
             } catch (e) { }
+            matchFutbinPlayersWithKnownItems();
             renderFutbinSbcTable();
         }
     }
@@ -2389,6 +2427,14 @@
             const eaId = Number(p.eaId);
             if (State.sellingMatches[eaId] || State.transferMatches[eaId] || State.clubMatches[eaId]) {
                 matched++;
+            }
+            if (State.gems && State.gems.length > 0) {
+                const ggGem = State.gems.find(g => Number(g.eaId) === eaId);
+                if (ggGem) {
+                    if (ggGem.estimatedPrice > 0) p.futggPrice = ggGem.estimatedPrice;
+                    else if (ggGem.currentPrice > 0) p.futggPrice = ggGem.currentPrice;
+                    if (ggGem.maxPrice > 0) p.futggMaxPrice = ggGem.maxPrice;
+                }
             }
         }
         updateFutbinTabBadge();
@@ -3005,15 +3051,18 @@
             .futgg-tag.extinct { background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid #ff5555; }
 
             .futgg-price-input {
-                width: 80px;
+                width: 58px;
+                min-width: 52px;
+                box-sizing: border-box;
                 background: #131c28;
                 border: 1px solid #35475e;
                 color: #fff;
-                padding: 4px 6px;
-                border-radius: 6px;
-                font-size: 12px;
-                font-weight: 600;
-                text-align: right;
+                padding: 3px 4px;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 700;
+                text-align: center;
+                flex-shrink: 0;
             }
             .futgg-price-input:focus { border-color: #00ff88; outline: none; }
 
@@ -4281,6 +4330,12 @@
 
             updateBadge();
 
+            // Sincronizar precios de FUT.GG con jugadores SBC de FUTBIN si existen
+            matchFutbinPlayersWithKnownItems();
+            if (State.activeTab === 'futbin') {
+                renderFutbinSbcTable();
+            }
+
             // Si hay gemas, escanear el club automáticamente
             if (State.gems.length > 0) {
                 await scanClubForGems(isAuto);
@@ -4664,10 +4719,10 @@
             } else {
                 priceColHtml = `
                     <div style="display:flex; flex-direction:column; gap:2px;">
-                        <div style="display:flex; align-items:center; gap:4px;">
-                            <button class="futgg-btn" style="padding:2px 6px;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
-                            <input type="number" class="futgg-price-input" data-eaid="${eaId}" value="${customPrice}" />
-                            <button class="futgg-btn" style="padding:2px 6px;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
+                        <div style="display:flex; align-items:center; gap:2px; flex-wrap:nowrap;">
+                            <button class="futgg-btn" style="padding:2px 5px; font-size:10px; flex-shrink:0;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
+                            <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${customPrice}" />
+                            <button class="futgg-btn" style="padding:2px 5px; font-size:10px; flex-shrink:0;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
                         </div>
                         <div style="font-size:10px; color:#8fa0b5;">
                             Puja: <b style="color:#00ff88;">${formatCoins(calculateStartBid(customPrice))}</b> (1h)
@@ -4855,8 +4910,8 @@
             if (!isMinA && isMinB) return -1;
             if (isMinA && !isMinB) return 1;
 
-            const priceA = marketA && !marketA.error ? (marketA.hasOutlier ? marketA.realisticBin : (marketA.lowestBin || 0)) : (a.futbinPrice || 0);
-            const priceB = marketB && !marketB.error ? (marketB.hasOutlier ? marketB.realisticBin : (marketB.lowestBin || 0)) : (b.futbinPrice || 0);
+            const priceA = marketA && !marketA.error ? (marketA.hasOutlier ? marketA.realisticBin : (marketA.lowestBin || 0)) : (a.futggPrice || a.futbinPrice || a.estimatedPrice || 0);
+            const priceB = marketB && !marketB.error ? (marketB.hasOutlier ? marketB.realisticBin : (marketB.lowestBin || 0)) : (b.futggPrice || b.futbinPrice || b.estimatedPrice || 0);
 
             if (priceB !== priceA) return priceB - priceA;
             if (b.frequency !== a.frequency) return b.frequency - a.frequency;
@@ -4872,13 +4927,13 @@
             <table class="futgg-table">
                 <thead>
                     <tr>
-                        <th style="width:20%;">Jugador SBC</th>
-                        <th style="width:13%;">En Mi Club</th>
-                        <th style="width:13%;">Frecuencia SBC</th>
-                        <th style="width:10%;">Est. FUTBIN</th>
-                        <th style="width:26%;">Mercado Real (EA)</th>
-                        <th style="width:10%;">Listar Por</th>
-                        <th style="width:8%; text-align:center;">Acción</th>
+                        <th style="width:19%; min-width:140px;">Jugador SBC</th>
+                        <th style="width:13%; min-width:105px;">En Mi Club</th>
+                        <th style="width:12%; min-width:90px;">Frecuencia SBC</th>
+                        <th style="width:11%; min-width:85px;">Est. FUT.GG</th>
+                        <th style="width:23%; min-width:160px;">Mercado Real (EA)</th>
+                        <th style="width:14%; min-width:115px;">Listar Por</th>
+                        <th style="width:8%; min-width:75px; text-align:center;">Acción</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -5052,8 +5107,8 @@
                     suggested = Math.max(200, (market.hasOutlier ? market.realisticBin : market.lowestBin) - CONFIG.undercutAmount);
                 }
             }
-            if (!suggested && (p.estimatedPrice || p.futbinPrice)) {
-                suggested = p.estimatedPrice || p.futbinPrice;
+            if (!suggested) {
+                suggested = p.futggPrice || p.estimatedPrice || p.futbinPrice || 0;
             }
 
             if (suggested > 0) {
@@ -5061,10 +5116,10 @@
                 const isExtinct = market && market.isExtinct;
                 const borderStyle = isExtinct ? 'border:1px solid #ef4444; color:#fca5a5; font-weight:bold;' : (isMin ? 'border-color:#ffaa00; color:#ffaa00;' : '');
                 priceColHtml = `
-                    <div style="display:flex; align-items:center; gap:2px;">
-                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
+                    <div style="display:flex; align-items:center; gap:2px; flex-wrap:nowrap;">
+                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px; flex-shrink:0;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
                         <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${suggested}" style="${borderStyle}" />
-                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
+                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px; flex-shrink:0;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
                     </div>
                     <div style="font-size:10px; color:${isExtinct ? '#fca5a5' : '#8fa0b5'}; margin-top:2px;">
                         ${isExtinct ? '🛡️ 90% Máx | ' : ''}Puja: <b>${formatCoins(calculateStartBid(suggested))}</b>
@@ -5148,7 +5203,21 @@
                     <td>${clubStatusHtml}</td>
                     <td>${freqHtml}</td>
                     <td>
-                        <div style="font-weight:700; color:#ffcc00;">${p.futbinPrice > 0 ? formatCoins(p.futbinPrice) : `<span style="color:#8fa0b5; font-size:11px;" title="Sin precio en FUTBIN">Sin precio</span>`}</div>
+                        ${(p.futggPrice && p.futggPrice > 0) ? `
+                            <div style="font-weight:700; color:#00ff88; display:flex; align-items:center; gap:4px;" title="Precio de mercado en FUT.GG">
+                                <span>${formatCoins(p.futggPrice)}</span>
+                                <span style="font-size:9px; background:rgba(0, 255, 136, 0.2); color:#00ff88; border:1px solid #00ff88; border-radius:3px; padding:0 3px; font-weight:800;">GG</span>
+                            </div>
+                        ` : (p.futbinPrice && p.futbinPrice > 0) ? `
+                            <div style="font-weight:700; color:#ffcc00; display:flex; align-items:center; gap:4px;" title="Precio estimado de FUTBIN">
+                                <span>${formatCoins(p.futbinPrice)}</span>
+                                <span style="font-size:9px; background:rgba(255, 204, 0, 0.2); color:#ffcc00; border:1px solid #ffcc00; border-radius:3px; padding:0 3px; font-weight:800;">BIN</span>
+                            </div>
+                        ` : (p.estimatedPrice && p.estimatedPrice > 0) ? `
+                            <div style="font-weight:700; color:#38bdf8;">${formatCoins(p.estimatedPrice)}</div>
+                        ` : `
+                            <span style="color:#8fa0b5; font-size:11px;" title="Sin precio estimado disponible">Sin precio</span>
+                        `}
                     </td>
                     <td>${marketHtml}</td>
                     <td>${priceColHtml}</td>
