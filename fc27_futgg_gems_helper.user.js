@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.15.1
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: detección robusta de SBCs, soporte completo para Partidos de Marquesina (grupo 59 y 4 desafíos) y navegación sin errores.
+// @version      1.15.2
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: detección robusta de SBCs, soporte para Partidos de Marquesina, Spooky Nights, Scary Candy y navegación sin errores.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1526,8 +1526,9 @@
     };
 
     const DEFAULT_FUTBIN_SBC_CATALOG = [
-        // Spooky Nights
+        // Spooky Nights y Scary Candy
         { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights" },
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Scary Candy", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/113/scary-candy" },
 
         // Partidos de Marquesina (Marquee Matchups - Grupo 59 y sus 4 desafíos completos)
         { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina (Grupo Completo / 4 Desafíos)", url: "https://www.futbin.com/27/squad-building-challenge/59" },
