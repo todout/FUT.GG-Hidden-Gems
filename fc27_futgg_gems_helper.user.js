@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.7
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: listado directo sin llamadas redundantes a Item.move, supresión activa de modales 'Destination Full' y UI optimizada.
+// @version      1.10.8
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción nativa 100% de JSON de soluciones SBC con IDs reales, precios FUTBIN exactos, búsqueda automática e inmediata en Mi Club sin clics manuales ni modales.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -524,43 +524,119 @@
             function parsePlayersFromSquadDoc(doc, htmlText = '', squadIndex = 1) {
                 const players = [];
                 const seenInThisSquad = new Set();
+                let squadData = null;
 
-                // 1. Si el DOM está renderizado (document activo), extraer de elementos HTML
-                if (doc) {
-                    const cardContainers = Array.from(doc.querySelectorAll('#cardlid1, #cardlid2, #cardlid3, #cardlid4, #cardlid5, #cardlid6, #cardlid7, #cardlid8, #cardlid9, #cardlid10, #cardlid11, .player-draggable, .playercard-field, .squad-player'));
-                    const allCandidates = cardContainers.length > 0 ? cardContainers : Array.from(doc.querySelectorAll('a[href*="/27/player/"], a[href*="/player/"]'));
+                // 1. Extraer directamente desde los tags <script> del DOM (si doc fue parseado)
+                if (doc && typeof doc.querySelectorAll === 'function') {
+                    const scripts = Array.from(doc.querySelectorAll('script'));
+                    for (const s of scripts) {
+                        const txt = (s.textContent || '').trim();
+                        if (txt.includes('"squadData"') && txt.includes('"squad"')) {
+                            try {
+                                const parsed = JSON.parse(txt);
+                                if (parsed && parsed.squadData && Array.isArray(parsed.squadData.squad)) {
+                                    squadData = parsed.squadData;
+                                    break;
+                                }
+                            } catch (e) { }
+                        }
+                    }
+                }
 
-                    for (const rawEl of allCandidates) {
-                        const el = rawEl.closest('.player-draggable, .playercard-field, .squad-player, [id^="cardlid"]') || rawEl;
+                // 2. Si no se encontró en doc, extraer de htmlText mediante regex de scripts
+                if (!squadData && htmlText) {
+                    const scriptRegex = /<script[^>]*>([\s\S]*?"squadData"[\s\S]*?)<\/script>/gi;
+                    let match;
+                    while ((match = scriptRegex.exec(htmlText)) !== null) {
+                        try {
+                            const parsed = JSON.parse(match[1]);
+                            if (parsed && parsed.squadData && Array.isArray(parsed.squadData.squad)) {
+                                squadData = parsed.squadData;
+                                break;
+                            }
+                        } catch (e) { }
+                    }
+                }
 
-                        // Extraer nombre
-                        const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
-                        let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
-                        if (name.includes('Coin') || name === 'Add Player') continue;
+                // 3. Procesar datos 100% nativos del JSON estructurado de FUTBIN
+                if (squadData && Array.isArray(squadData.squad)) {
+                    for (const item of squadData.squad) {
+                        if (!item || (!item.playerName && (!item.statsCard || !item.statsCard.cardname))) continue;
 
-                        // Extraer FUTBIN ID del enlace
+                        const name = (item.playerName || item.statsCard?.cardname || '').trim();
+                        if (!name || name === 'Add Player' || name.includes('Coin')) continue;
+
+                        const rating = parseInt(item.statsCard?.rating || item.rating || 0, 10);
+                        const position = (item.position?.value || item.statsCard?.playerPositions?.main || '').toUpperCase();
+                        const futbinId = item.id?.playerCardId?.value || item.baseId?.value || null;
+
+                        // Extraer EA Asset ID real de las URLs oficiales de imagen de FUTBIN (/players/{eaId}.png)
+                        let eaId = null;
+                        const imgUrls = [
+                            item.playerImage?.fixed?.url?.image1x,
+                            item.playerImage?.fixed?.url?.image2x,
+                            item.statsCard?.playerImages?.playerImage?.fixed?.url?.image1x,
+                            item.statsCard?.playerImages?.playerImage?.fixed?.url?.image2x
+                        ];
+                        for (const u of imgUrls) {
+                            if (typeof u === 'string') {
+                                const m = u.match(/\/players\/(\d+)\.png/i);
+                                if (m) {
+                                    eaId = Number(m[1]);
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!eaId && item.eaId) eaId = Number(item.eaId);
+                        if (!eaId && item.resourceId) eaId = Number(item.resourceId);
+                        if (!eaId && item.defId) eaId = Number(item.defId);
+                        if (!eaId && futbinId && futbinId >= 50000) eaId = futbinId;
+
+                        const uniqueKey = eaId || futbinId || name;
+                        if (!uniqueKey || seenInThisSquad.has(uniqueKey)) continue;
+                        seenInThisSquad.add(uniqueKey);
+
+                        // Precio exacto reportado por FUTBIN para la plataforma (PlayStation/PC)
+                        const futbinPrice = parseInt(item.priceCard?.priceData?.psPrice || item.priceCard?.priceData?.pcPrice || item.priceCard?.priceData?.price || 0, 10);
+                        const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
+                        const estimatedPrice = futbinPrice > 0 ? futbinPrice : (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700));
+
+                        players.push({
+                            eaId: eaId || futbinId,
+                            realEaId: eaId,
+                            futbinId: futbinId,
+                            name: name,
+                            rating: rating,
+                            position: position,
+                            quality: quality,
+                            futbinPrice: futbinPrice,
+                            estimatedPrice: estimatedPrice,
+                            squadIndex: squadIndex
+                        });
+                    }
+                }
+
+                // 4. Fallback ÚNICAMENTE a contenedores #cardlid1..11 si el JSON no estuviera disponible (ej. DOM completamente hidratado en vivo)
+                // NUNCA buscar en a[href*="/player/"] a nivel global para no capturar jugadores del sidebar / trending como Huerta
+                if (players.length === 0 && doc && typeof doc.querySelectorAll === 'function') {
+                    const cardContainers = Array.from(doc.querySelectorAll('#cardlid1, #cardlid2, #cardlid3, #cardlid4, #cardlid5, #cardlid6, #cardlid7, #cardlid8, #cardlid9, #cardlid10, #cardlid11'));
+                    for (const el of cardContainers) {
+                        const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name');
+                        let name = (nameEl ? nameEl.textContent : '').trim().split('\n')[0].trim();
+                        if (!name || name.includes('Coin') || name === 'Add Player') continue;
+
+                        let eaId = null;
                         let futbinId = null;
-                        const link = el.querySelector('a[href*="/player/"]') || rawEl.closest('a[href*="/player/"]') || (rawEl.tagName === 'A' && rawEl.href.includes('/player/') ? rawEl : null);
+                        const link = el.querySelector('a[href*="/player/"]');
                         if (link && link.href) {
                             const mLink = link.href.match(/\/player\/(\d+)/i);
                             if (mLink) futbinId = Number(mLink[1]);
                         }
 
-                        // Extraer EA Asset ID buscando en TODOS los elementos de imagen (src, data-src, srcset)
-                        let eaId = null;
                         const allImgs = Array.from(el.querySelectorAll('img, .playercard-27-base-img, [style*="/players/"]'));
-                        if (rawEl.tagName === 'IMG') allImgs.push(rawEl);
-
                         for (const im of allImgs) {
-                            const attrs = [
-                                im.getAttribute('src'),
-                                im.getAttribute('data-src'),
-                                im.getAttribute('srcset'),
-                                im.getAttribute('data-srcset'),
-                                im.getAttribute('data-original'),
-                                im.src,
-                                im.style ? im.style.backgroundImage : null
-                            ];
+                            const attrs = [im.getAttribute('src'), im.getAttribute('data-src'), im.getAttribute('srcset'), im.src, im.style ? im.style.backgroundImage : null];
                             for (const attr of attrs) {
                                 if (attr) {
                                     const m = attr.match(/\/players\/(\d+)\.png/i);
@@ -573,29 +649,11 @@
                             if (eaId) break;
                         }
 
-                        // Si no se encontró en imágenes del DOM, buscar en el texto HTML circundante por futbinId o name
-                        if (!eaId && htmlText) {
-                            let searchPos = -1;
-                            if (futbinId) searchPos = htmlText.indexOf(String(futbinId));
-                            if (searchPos === -1 && name) searchPos = htmlText.indexOf(`"playerName":"${name}"`);
-                            if (searchPos !== -1) {
-                                const snippet = htmlText.substring(Math.max(0, searchPos - 1200), Math.min(htmlText.length, searchPos + 2200));
-                                const mEa = snippet.match(/\/players\/(\d+)\.png/i);
-                                if (mEa) eaId = Number(mEa[1]);
-                            }
-                        }
-
-                        // Si aún no tenemos eaId pero tenemos futbinId:
-                        // Solo usar futbinId como eaId si es >= 50000 (en EA FC los IDs de jugadores son típicamente > 50000)
-                        if (!eaId && futbinId && futbinId >= 50000) {
-                            eaId = futbinId;
-                        }
-
+                        if (!eaId && futbinId && futbinId >= 50000) eaId = futbinId;
                         const uniqueKey = eaId || futbinId || name;
                         if (!uniqueKey || seenInThisSquad.has(uniqueKey)) continue;
                         seenInThisSquad.add(uniqueKey);
 
-                        // Rating
                         const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
                         let rating = 0;
                         if (ratingEl) {
@@ -603,12 +661,10 @@
                             if (rMatch) rating = parseInt(rMatch[0], 10);
                         }
 
-                        // Posición
                         const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
                         const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
 
-                        // Precio de FUTBIN
-                        const priceEl = el.querySelector('.price-segment, .player-price, .platform-price-wrapper-small, .price') || rawEl.querySelector('.price-segment, .player-price, .price');
+                        const priceEl = el.querySelector('.price-segment, .player-price, .platform-price-wrapper-small, .price');
                         let futbinPrice = 0;
                         if (priceEl) {
                             const pText = priceEl.textContent.replace(/,/g, '').replace(/🪙/g, '').trim();
@@ -621,83 +677,19 @@
                             }
                         }
 
-                        // Si no se encontró precio en el DOM pero tenemos htmlText, buscar en el fragmento JSON
-                        if (futbinPrice === 0 && htmlText && eaId) {
-                            const pos = htmlText.indexOf(String(eaId));
-                            if (pos !== -1) {
-                                const snippet = htmlText.substring(Math.max(0, pos - 500), Math.min(htmlText.length, pos + 1000));
-                                const pMatch = snippet.match(/"(?:psPrice|price|pcPrice|bin)":\s*"?(\d+)"?/i) || snippet.match(/data-price="?(\d+)"?/i);
-                                if (pMatch) futbinPrice = parseInt(pMatch[1], 10) || 0;
-                            }
-                        }
-
-                        let quality = 'gold';
-                        if (rating > 0) {
-                            if (rating <= 64) quality = 'bronze';
-                            else if (rating <= 74) quality = 'silver';
-                            else quality = 'gold';
-                        }
+                        const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
+                        const estimatedPrice = futbinPrice > 0 ? futbinPrice : (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700));
 
                         players.push({
                             eaId: eaId || futbinId,
                             realEaId: eaId,
                             futbinId: futbinId,
-                            name: name || `Jugador #${eaId || futbinId}`,
+                            name: name,
                             rating: rating,
                             position: position,
                             quality: quality,
                             futbinPrice: futbinPrice,
-                            estimatedPrice: futbinPrice || (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700)),
-                            squadIndex: squadIndex
-                        });
-                    }
-                }
-
-                // 2. Si el DOM no tenía elementos renderizados (HTML estático de fetch), extraer del JSON embebido
-                if (players.length === 0 && htmlText) {
-                    const regex = /"position":\{"value":"([^"]+)"\},"playerName":"([^"]+)"[\s\S]*?\/players\/(\d+)\.png/g;
-                    let m;
-                    while ((m = regex.exec(htmlText)) !== null) {
-                        const pos = m[1];
-                        const name = m[2];
-                        const eaId = Number(m[3]);
-
-                        if (!eaId || seenInThisSquad.has(eaId)) continue;
-                        seenInThisSquad.add(eaId);
-
-                        // Ventana local para extraer rating y precio sin expresiones codiciosas
-                        const snippet = htmlText.substring(Math.max(0, m.index - 400), Math.min(htmlText.length, m.index + 2200));
-
-                        let rating = 0;
-                        const rMatch = snippet.match(/"(?:rating|overall)":\s*"?(\d+)"?/i) || snippet.match(/"statsCard":\{"rating":\s*"?(\d+)"?/i);
-                        if (rMatch) {
-                            rating = parseInt(rMatch[1], 10) || 0;
-                        }
-
-                        let futbinPrice = 0;
-                        const priceMatch = snippet.match(/"(?:psPrice|price|pcPrice|bin)":\s*"?(\d+)"?/i) || snippet.match(/data-price="?(\d+)"?/i);
-                        if (priceMatch) {
-                            futbinPrice = parseInt(priceMatch[1], 10) || 0;
-                        }
-
-                        let futbinId = null;
-                        const fMatch = snippet.match(/"playerCardId":\{"value":(\d+)\}/) || snippet.match(/\/player\/(\d+)\//);
-                        if (fMatch) {
-                            futbinId = Number(fMatch[1]);
-                        }
-
-                        const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
-
-                        players.push({
-                            eaId: eaId,
-                            realEaId: eaId,
-                            futbinId: futbinId,
-                            name: name || `Jugador #${eaId}`,
-                            rating: rating,
-                            position: pos,
-                            quality: quality,
-                            futbinPrice: futbinPrice,
-                            estimatedPrice: futbinPrice || (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700)),
+                            estimatedPrice: estimatedPrice,
                             squadIndex: squadIndex
                         });
                     }
@@ -1425,24 +1417,24 @@
         const assetId = Number(it.assetId || 0);
         const conceptId = Number(it.conceptId || 0);
 
-        // 1. Coincidencia directa por ID si se dispone de eaId
+        // 1. Coincidencia directa por ID si se dispone de eaId (estricta e infalible)
         if (numEaId > 0) {
-            if (resId === numEaId || defId === numEaId || maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId) {
-                return true;
-            }
+            return (resId === numEaId || defId === numEaId || maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId);
         }
 
-        // 2. Coincidencia por nombre (fallback seguro para jugadores con IDs de variación o desfasados)
+        // 2. Coincidencia por nombre exacto únicamente si NO se dispone de ningún eaId
         if (name && it._staticData) {
-            const names = [
-                it._staticData.name,
-                it._staticData.lastName,
-                it._staticData.firstName,
-                it._staticData.commonName
-            ].filter(Boolean).map(n => n.toLowerCase().trim());
-            const target = name.toLowerCase().trim();
-            if (names.some(n => n === target || n.includes(target) || target.includes(n))) {
-                return true;
+            const cleanTarget = name.toLowerCase().trim();
+            if (cleanTarget.length >= 4) {
+                const names = [
+                    it._staticData.name,
+                    it._staticData.lastName,
+                    it._staticData.firstName,
+                    it._staticData.commonName
+                ].filter(Boolean).map(n => n.toLowerCase().trim());
+                if (names.some(n => n === cleanTarget)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -2509,6 +2501,24 @@
             } catch (e) { }
             matchFutbinPlayersWithKnownItems();
             renderFutbinSbcTable();
+            autoScanClubForFutbinPlayers();
+        }
+    }
+
+    function autoScanClubForFutbinPlayers() {
+        if (!State.futbinSbcData || !State.futbinSbcData.players || State.futbinSbcData.players.length === 0) return;
+        if (State.isScanningClub || State.isBatchRunning) return;
+
+        matchFutbinPlayersWithKnownItems();
+
+        const missing = State.futbinSbcData.players.filter(p => {
+            const eaId = Number(p.eaId);
+            return eaId > 0 && !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId] && !State.clubScanned[eaId];
+        });
+
+        if (missing.length > 0) {
+            console.log(`[FUTBIN SBC] 🚀 Auto-escaneo de club iniciado para ${missing.length} cartas pendientes...`);
+            scanClubForFutbinPlayers(true);
         }
     }
 
@@ -2548,9 +2558,9 @@
         return matched;
     }
 
-    async function scanClubForFutbinPlayers() {
+    async function scanClubForFutbinPlayers(isSilent = false) {
         if (!State.futbinSbcData || !State.futbinSbcData.players) {
-            notificar("No hay soluciones SBC de FUTBIN cargadas.", "#ffaa00");
+            if (!isSilent) notificar("No hay soluciones SBC de FUTBIN cargadas.", "#ffaa00");
             return;
         }
 
@@ -2568,18 +2578,18 @@
 
         const missing = State.futbinSbcData.players.filter(p => {
             const eaId = Number(p.eaId);
-            return !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId];
+            return eaId > 0 && !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId] && !State.clubScanned[eaId];
         });
 
         if (missing.length === 0) {
-            notificar("✅ Todos los jugadores ya fueron verificados en tu cuenta", "#00ff88");
+            if (!isSilent) notificar("✅ Todos los jugadores ya fueron verificados en tu cuenta", "#00ff88");
             return;
         }
 
         State.isScanningClub = true;
         State.forceCancelAllOperations = false;
         renderBatchControls();
-        notificar(`🔍 Comprobando ${missing.length} cartas en tu Club con delays seguros...`, "#00ccff");
+        if (!isSilent) notificar(`🔍 Comprobando ${missing.length} cartas en tu Club con delays seguros...`, "#00ccff");
 
         const win = getAppWindow();
         let found = 0;
@@ -2594,7 +2604,7 @@
 
                 updateBatchStatus(`Club (${index}/${missing.length}): Comprobando ${name}...`);
 
-                // Consulta segura a services.Club.search por defId
+                // Consulta segura a services.Club.search por defId exacto
                 if (win.services && win.services.Club && typeof win.services.Club.search === 'function') {
                     try {
                         const criteria = createSearchCriteria(eaId);
@@ -2610,31 +2620,26 @@
                         let items = extractItemsFromEaResponse(res);
                         let match = items && items.find(it => matchesCard(it, eaId, name));
 
-                        // Si la búsqueda por defId falló y tenemos calidad, hacer búsqueda amplia en club por nivel
-                        if (!match && p.quality) {
-                            const broadCriteria = createSearchCriteria();
-                            broadCriteria.count = 35;
-                            broadCriteria.offset = 0;
-                            broadCriteria.type = 'player';
-                            broadCriteria.level = p.quality;
-                            const broadRes = await callEAService(win.services.Club.search(broadCriteria));
-                            const broadItems = extractItemsFromEaResponse(broadRes);
-                            match = broadItems && broadItems.find(it => matchesCard(it, eaId, name));
-                            if (match) {
-                                const realDefId = Number(match.definitionId || match.resourceId || match.assetId);
-                                if (realDefId > 0 && realDefId !== eaId) {
-                                    console.log(`[FUTBIN SBC] 🔄 Corrigiendo ID de ${name}: de ${eaId} a defId EA real ${realDefId}`);
-                                    p.eaId = realDefId;
-                                }
-                            }
+                        // Si no se encontró en club, verificar en Almacenamiento/Storage de duplicados
+                        if (!match && win.services && win.services.Item && typeof win.services.Item.searchStorageItems === 'function') {
+                            try {
+                                const storageCrit = createSearchCriteria(eaId);
+                                storageCrit.count = 20;
+                                storageCrit.offset = 0;
+                                storageCrit.type = 'player';
+                                storageCrit.maskedDefId = eaId;
+                                storageCrit.defId = [eaId];
+                                const storRes = await callEAService(win.services.Item.searchStorageItems(storageCrit));
+                                const storItems = extractItemsFromEaResponse(storRes);
+                                match = storItems && storItems.find(it => matchesCard(it, eaId, name));
+                            } catch (eStor) { }
                         }
 
                         if (match) {
                             match._isTradeable = isItemTradeable(match);
-                            const finalEaId = Number(p.eaId);
-                            State.clubMatches[finalEaId] = match;
+                            State.clubMatches[eaId] = match;
                             found++;
-                            console.log(`[FUTBIN SBC] 🟢 Encontrado en club: ${name} (ID: ${finalEaId})`, match);
+                            console.log(`[FUTBIN SBC] 🟢 Encontrado en cuenta: ${name} (ID: ${eaId}, Tradeable: ${match._isTradeable})`, match);
                         }
                     } catch (err) {
                         console.warn(`[FUTBIN SBC] Error al consultar ${name} en club:`, err);
@@ -2642,9 +2647,8 @@
                 }
 
                 State.clubScanned[eaId] = true;
-                State.clubScanned[Number(p.eaId)] = true;
 
-                if (index % 3 === 0 || found > 0) {
+                if (index % 2 === 0 || found > 0) {
                     updateFutbinTabBadge();
                     renderFutbinSbcTable();
                 }
@@ -2657,7 +2661,9 @@
             updateFutbinTabBadge();
             renderFutbinSbcTable();
             renderBatchControls();
-            notificar(`✅ Escaneo finalizado: ${found} cartas encontradas en tu club`, "#00ff88");
+            if (found > 0 || !isSilent) {
+                notificar(`✅ Escaneo de club completado: ${found} carta(s) encontrada(s)`, "#00ff88");
+            }
         }
     }
 
@@ -2783,6 +2789,7 @@
                     notificar(`🟢 ¡${data.players.length} jugadores cargados del SBC "${data.challengeTitle || 'SBC'}"!`, "#00ff88");
                     matchFutbinPlayersWithKnownItems();
                     renderFutbinSbcTable();
+                    autoScanClubForFutbinPlayers();
                     resolve(data);
                 } else {
                     reject(new Error("No se recibieron cartas válidas de FUTBIN."));
@@ -4049,6 +4056,7 @@
                         notificar(`🟢 Soluciones del SBC "${latest.challengeTitle}" cargadas (${latest.players.length} jugadores)`, "#00ff88");
                         matchFutbinPlayersWithKnownItems();
                         renderFutbinSbcTable();
+                        autoScanClubForFutbinPlayers();
                     } else {
                         notificar("No hay datos de soluciones válidos guardados aún de FUTBIN", "#ffaa00");
                     }
@@ -4197,6 +4205,7 @@
                             notificar(`🧩 Soluciones del SBC "${latest.challengeTitle || 'SBC'}" actualizadas desde FUTBIN`, "#00ff88");
                             matchFutbinPlayersWithKnownItems();
                             renderFutbinSbcTable();
+                            autoScanClubForFutbinPlayers();
                         }
                     }
                 });
@@ -5064,26 +5073,6 @@
             gemsCountEl.textContent = `SBC: ${displayedPlayers.length} cartas mostradas (de ${sbc.players.length} en ${sbc.solutionCount || 5} soluciones)`;
         }
 
-        const unverifiedCount = sbc.players.filter(p => {
-            const id = Number(p.eaId);
-            return !State.clubMatches[id] && !State.transferMatches[id] && !State.sellingMatches[id] && !State.soldMatches[id] && !State.clubScanned[id];
-        }).length;
-
-        let bannerHtml = '';
-        if (unverifiedCount > 0) {
-            bannerHtml = `
-                <div style="background: rgba(0, 204, 255, 0.08); border: 1px solid rgba(0, 204, 255, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px;">
-                    <div style="display: flex; align-items: center; gap: 8px; color: #cbd5e1;">
-                        <span style="font-size: 18px;">💡</span>
-                        <span>Hay <b>${unverifiedCount} cartas</b> de este SBC pendientes de comprobar en tu Club.</span>
-                    </div>
-                    <button class="futgg-btn primary" id="futbin-banner-scan-btn" style="padding: 5px 12px; font-size: 11px; white-space: nowrap;">
-                        🔍 Buscar en Mi Club
-                    </button>
-                </div>
-            `;
-        }
-
         let html = `
             <table class="futgg-table">
                 <thead>
@@ -5126,10 +5115,12 @@
                 clubStatusHtml = `<span class="futgg-tag none" title="En el Club pero Intransferible">🔒 Intransferible</span>`;
             } else if (sold) {
                 clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;">✅ Ya Vendido</span>`;
+            } else if (State.isScanningClub && !State.clubScanned[eaId]) {
+                clubStatusHtml = `<span class="futgg-tag none" style="color:#00ccff; font-weight:700;">⏳ Comprobando...</span>`;
             } else if (State.clubScanned[eaId]) {
                 clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;" title="Búsqueda realizada: no se encontró en tu club">✕ Fuera de Club</span>`;
             } else {
-                clubStatusHtml = `<span class="futgg-tag none" style="color:#ffaa00; border:1px dashed #ffaa00; font-weight:700;" title="Aún no verificado en tu club. Haz clic en 'Buscar en Club' para comprobar">❓ Sin comprobar</span>`;
+                clubStatusHtml = `<span class="futgg-tag none" style="color:#8fa0b5; font-style:italic;" title="En cola para verificación automática">⏳ Pendiente...</span>`;
             }
 
             // Frecuencia en Soluciones
@@ -5388,10 +5379,7 @@
         }
 
         html += `</tbody></table>`;
-        container.innerHTML = bannerHtml + html;
-
-        const bannerScanBtn = document.getElementById('futbin-banner-scan-btn');
-        if (bannerScanBtn) bannerScanBtn.onclick = scanClubForFutbinPlayers;
+        container.innerHTML = html;
 
         if (State.focusedGemId) {
             const targetRow = container.querySelector(`tr[data-eaid="${State.focusedGemId}"]`);
