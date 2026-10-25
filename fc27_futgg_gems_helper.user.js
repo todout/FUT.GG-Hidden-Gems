@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.6
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción precisa de EA Asset IDs, detección garantizada de cartas en club, listado seguro al 90% para cartas extintas y UI optimizada.
+// @version      1.10.7
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: listado directo sin llamadas redundantes a Item.move, supresión activa de modales 'Destination Full' y UI optimizada.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -2019,25 +2019,70 @@
     function dismissEaDialogIfPresent() {
         try {
             const win = getAppWindow();
-            if (win.gNavManager) {
+            const dialogs = document.querySelectorAll('.ea-dialog-view, .dialog-view, .Dialog, .view-modal-dialog, .ut-click-shield');
+            let dismissedAny = false;
+
+            dialogs.forEach(d => {
+                const text = (d.textContent || '').toLowerCase();
+                const isDestinationFull = text.includes('destination full') ||
+                    text.includes('cannot move this item') ||
+                    text.includes('destination is already full') ||
+                    text.includes('destino lleno') ||
+                    text.includes('no se puede mover este art') ||
+                    text.includes('lista de transferibles est') ||
+                    (text.includes('full') && (text.includes('destination') || text.includes('item') || text.includes('transfer')));
+
+                if (isDestinationFull) {
+                    dismissedAny = true;
+                    console.warn("[FUT.GG Helper] 🛡️ Suprimiendo de inmediato diálogo falso de EA 'Destination full'");
+
+                    // 1. Simular pulsación de Enter
+                    try {
+                        const enterEv = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true });
+                        window.dispatchEvent(enterEv);
+                        document.dispatchEvent(enterEv);
+                        d.dispatchEvent(enterEv);
+                    } catch (e) { }
+
+                    // 2. Hacer click en el botón de confirmación/OK
+                    const btn = d.querySelector('.btn-standard, button, .dialog-footer button, .close-btn');
+                    if (btn) {
+                        try { btn.click(); } catch (e) { }
+                        try { btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (e) { }
+                    }
+
+                    // 3. Limpiar click-shield de fondo si persiste
+                    const clickShield = d.classList.contains('ut-click-shield') ? d : d.closest('.ut-click-shield');
+                    if (clickShield) {
+                        clickShield.classList.remove('showing');
+                    }
+                    if (typeof d.remove === 'function' && !d.classList.contains('ut-click-shield')) {
+                        try { d.remove(); } catch (e) { }
+                    }
+                }
+            });
+
+            if (dismissedAny && win.gNavManager) {
                 if (typeof win.gNavManager.hasOpenDialog === 'function' && win.gNavManager.hasOpenDialog()) {
-                    if (typeof win.gNavManager.popDialog === 'function') win.gNavManager.popDialog();
+                    if (typeof win.gNavManager.popDialog === 'function') {
+                        try { win.gNavManager.popDialog(); } catch (e) { }
+                    }
                 }
                 const dialogController = typeof win.gNavManager.getDialogController === 'function' ? win.gNavManager.getDialogController() : null;
                 if (dialogController && typeof dialogController.close === 'function') {
-                    dialogController.close();
+                    try { dialogController.close(); } catch (e) { }
                 }
             }
-            const dialogs = document.querySelectorAll('.ea-dialog-view, .dialog-view, .Dialog, .view-modal-dialog');
-            dialogs.forEach(d => {
-                const text = (d.textContent || '').toLowerCase();
-                if (text.includes('full') || text.includes('llena') || text.includes('destination') || text.includes('destino') || text.includes('no se ha podido')) {
-                    const btn = d.querySelector('.btn-standard, button, .dialog-footer button, .close-btn');
-                    if (btn) btn.click();
-                    else d.remove();
-                }
-            });
         } catch (e) { }
+    }
+
+    function scheduleDismissEaDialog() {
+        dismissEaDialogIfPresent();
+        setTimeout(dismissEaDialogIfPresent, 50);
+        setTimeout(dismissEaDialogIfPresent, 150);
+        setTimeout(dismissEaDialogIfPresent, 300);
+        setTimeout(dismissEaDialogIfPresent, 600);
+        setTimeout(dismissEaDialogIfPresent, 1000);
     }
 
     async function moveToTransferList(gem, silent = false) {
@@ -2086,7 +2131,7 @@
         if (currentPile === pile || (typeof item.isTransferList === 'function' && item.isTransferList())) {
             delete State.clubMatches[eaId];
             State.transferMatches[eaId] = item;
-            renderGemsTable();
+            renderCurrentTable();
             if (!silent) notificar(`📋 ${gem.name} ya está en Transferibles`, "#00ccff");
             return true;
         }
@@ -2132,8 +2177,7 @@
             return true;
         } catch (err) {
             console.error("Error al mover a transferibles:", err);
-            dismissEaDialogIfPresent();
-            setTimeout(dismissEaDialogIfPresent, 100);
+            scheduleDismissEaDialog();
 
             const errStr = String(err && (err.message || err.statusText || err) || '').toLowerCase();
             if (errStr.includes('destination full') || errStr.includes('full') || (err && err.status === 403)) {
@@ -2217,17 +2261,9 @@
         const startBid = calculateStartBid(validBuyNow);
 
         try {
-            // Si el item está en el club, primero moverlo a transferibles para que EA acepte el listado sin errores
-            const transferPile = (win.ItemPile && win.ItemPile.TRANSFER) || 2;
-            if (item.pile !== transferPile) {
-                const moved = await moveToTransferList(gem, true);
-                if (moved && State.transferMatches[eaId]) {
-                    item = State.transferMatches[eaId];
-                }
-            }
-
+            // En EA FC Web App, services.Item.list lista directamente cartas desde Club o Transferibles sin necesidad de mover
             await callEAService(services.Item.list(item, startBid, validBuyNow, 3600));
-            dismissEaDialogIfPresent();
+            scheduleDismissEaDialog();
 
             delete State.transferMatches[eaId];
             delete State.clubMatches[eaId];
@@ -2243,7 +2279,7 @@
             notificar(`🚀 ¡${gem.name} listado por ${formatCoins(validBuyNow)}! (Puja: ${formatCoins(startBid)})`, "#00ff88");
         } catch (err) {
             console.error("Error al listar:", err);
-            dismissEaDialogIfPresent();
+            scheduleDismissEaDialog();
             notificar(`❌ Error al listar ${gem.name}: ${err.message || err}`, "#ff4444");
         }
     }
@@ -5392,31 +5428,25 @@
     // Interceptor activo de modales: suprime de inmediato carteles de "Destination full / Lista llena"
     try {
         const dialogObserver = new MutationObserver((mutations) => {
+            let shouldCheck = false;
             for (const m of mutations) {
-                for (const node of m.addedNodes) {
-                    if (node.nodeType === 1) {
-                        const isDialog = (node.classList && (node.classList.contains('ea-dialog-view') || node.classList.contains('dialog-view'))) ||
-                            (node.querySelector && node.querySelector('.ea-dialog-view, .dialog-view'));
-                        if (isDialog) {
-                            const text = (node.textContent || '').toLowerCase();
-                            if (text.includes('destination full') ||
-                                text.includes('lista de transferibles est') ||
-                                text.includes('destino lleno') ||
-                                (text.includes('full') && text.includes('transfer'))) {
-                                console.warn("[FUT.GG Helper] 🛡️ Suprimiendo de inmediato diálogo falso de EA 'Destination full'");
-                                const btn = node.querySelector('.btn-standard, button, .dialog-footer button, .close-btn');
-                                if (btn) {
-                                    btn.click();
-                                } else if (typeof node.remove === 'function') {
-                                    node.remove();
-                                }
-                            }
-                        }
-                    }
+                if (m.addedNodes && m.addedNodes.length > 0) {
+                    shouldCheck = true;
+                    break;
+                }
+                if (m.type === 'attributes' && m.target && m.target.classList && m.target.classList.contains('ut-click-shield')) {
+                    shouldCheck = true;
+                    break;
                 }
             }
+            if (shouldCheck) {
+                scheduleDismissEaDialog();
+            }
         });
-        dialogObserver.observe(document.body, { childList: true, subtree: true });
+        dialogObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+
+        // Intervalo de seguridad para cerrar modales fantasma de Destination Full
+        setInterval(dismissEaDialogIfPresent, 600);
     } catch (e) { }
 
     // Atajo de teclado global: Alt + G para abrir/cerrar el panel
