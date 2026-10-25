@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.15.3
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: catálogo canónico asegurado con Spooky Nights, Scary Candy y Marquesinas, soporte multi-perfil y navegación sin errores.
+// @version      1.15.4
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: sincronización de club en memoria instantánea (sin interrogaciones falsas), filtro exclusivo para transferibles vendibles y soporte completo para SBCs.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -3283,12 +3283,14 @@
             if (State.futbinFilterOnlyBronzeSilver) {
                 if (p.quality !== 'bronze' && p.quality !== 'silver') return false;
             }
-            // 2. Filtro En Mi Club prioritario
+            // 2. Filtro En Mi Club prioritario (solo cartas transferibles listas para vender)
             if (State.futbinFilterOnlyInClub) {
                 const inClub = State.clubMatches[eaId];
                 const inTransfer = State.transferMatches[eaId];
                 const selling = State.sellingMatches[eaId];
                 const sold = State.soldMatches[eaId];
+                // Si está en el club pero es intransferible, el usuario no puede venderla, descartar
+                if (inClub && !isItemTradeable(inClub)) return false;
                 if (!inClub && !inTransfer && !selling && !sold) return false;
             }
             // 3. Filtro Ocultar Precio Mínimo (si ya fue consultado y está a descarte)
@@ -3404,8 +3406,9 @@
                             if (match) {
                                 match._isTradeable = isItemTradeable(match);
                                 State.clubMatches[eaId] = match;
-                                State.clubScanned[eaId] = true;
                             }
+                            // Si Paletools tiene el club en RAM, marcar SIEMPRE como escaneado: si no está, ya sabemos con 100% de certeza que no la tiene
+                            State.clubScanned[eaId] = true;
                         }
                     }
                 }
@@ -3450,7 +3453,7 @@
 
         const missing = State.futbinSbcData.players.filter(p => {
             const eaId = Number(p.eaId);
-            return eaId > 0 && !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId];
+            return eaId > 0 && !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId] && !State.clubScanned[eaId];
         });
 
         if (missing.length === 0) {
@@ -6324,17 +6327,17 @@
             } else if (inTransfer) {
                 clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En Lista de Transferibles (listo para listar)">📋</span></div>`;
             } else if (inClub && isItemTradeable(inClub)) {
-                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Tradeable / Transferible)">🟢</span></div>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Tradeable / Transferible - ¡Listo para vender!)">🟢</span></div>`;
             } else if (inClub && !isItemTradeable(inClub)) {
-                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Intransferible)">🔒</span></div>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Intransferible - No se puede vender)">🔒</span></div>`;
             } else if (sold) {
                 clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="Ya vendido">✅</span></div>`;
             } else if (State.isScanningClub && !State.clubScanned[eaId]) {
                 clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="Comprobando club...">⏳</span></div>`;
             } else if (State.clubScanned[eaId]) {
-                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="No encontrado en tu club">⚪</span></div>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="Comprobado en tu club: No la tienes">⚪</span></div>`;
             } else {
-                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="Pendiente de comprobar">❓</span></div>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="Pendiente de comprobar en el club">❓</span></div>`;
             }
 
             // Frecuencia en Soluciones
@@ -6541,9 +6544,11 @@
                     `;
                 }
             } else if (inClub && !isItemTradeable(inClub)) {
-                actionHtml = `<span style="font-size:11px; color:#64748b; font-style:italic; white-space:nowrap;">🔒 Intransferible</span>`;
+                actionHtml = `<span style="font-size:11px; color:#64748b; font-style:italic; white-space:nowrap;" title="Carta intransferible en tu club (no se puede vender)">🔒 Intransferible</span>`;
             } else if (sold) {
                 actionHtml = `<span style="font-size:11px; color:#64748b; white-space:nowrap;">✅ Ya Vendido</span>`;
+            } else if (State.clubScanned[eaId] && !inClub && !inTransfer && !selling) {
+                actionHtml = `<span style="font-size:11px; color:#475569; font-style:italic; white-space:nowrap;" title="Comprobado en tu club: No la tienes">⚪ No en club</span>`;
             } else {
                 actionHtml = `
                     <button class="futgg-btn" style="padding:3px 8px; font-size:10px; flex-shrink:0; white-space:nowrap;" data-action="search-club" data-eaid="${eaId}" title="Buscar en mi club">🔍 Escanear</button>
