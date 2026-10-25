@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.8
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción nativa 100% de JSON de soluciones SBC con IDs reales, precios FUTBIN exactos, búsqueda automática e inmediata en Mi Club sin clics manuales ni modales.
+// @version      1.10.9
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: columnas compactas anti-scroll, estado de club en emojis puros, corrección en envío a transferibles de EA y extracción nativa de JSON.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1059,7 +1059,11 @@
                             } catch (e) { }
 
                             if (response && response.success === false) {
-                                reject(response.error || response.status || new Error("Error en servicio de EA"));
+                                const errObj = response.error || {};
+                                const msg = errObj.message || errObj.reason || response.statusText || (typeof errObj === 'string' ? errObj : "Error en servicio de EA");
+                                const errorInstance = new Error(msg);
+                                if (typeof errObj === 'object') Object.assign(errorInstance, errObj);
+                                reject(errorInstance);
                             } else {
                                 resolve(response);
                             }
@@ -2101,7 +2105,7 @@
         }
 
         let item = State.clubMatches[eaId];
-        if (!item) {
+        if (!item || !item.id) {
             item = await findCardInAccount(gem);
         }
 
@@ -2116,7 +2120,10 @@
             return false;
         }
 
-        const pile = (win.enums && win.enums.FUTItemPile && win.enums.FUTItemPile.TRANSFER) || 2;
+        const pile = (win.enums && win.enums.FUTItemPile && win.enums.FUTItemPile.TRANSFER) ||
+            (win.enums && win.enums.ItemPile && win.enums.ItemPile.TRANSFER) ||
+            (win.ItemPile && win.ItemPile.TRANSFER) ||
+            2;
 
         // 5. Verificar si en el modelo de EA ya está en Transferibles
         const currentPile = item.pile || item._pile || (typeof item.getPile === 'function' ? item.getPile() : 0);
@@ -2141,11 +2148,27 @@
             }
         } catch (e) { }
 
-        // 7. Mover a transferibles
+        // 7. Mover a transferibles (firma oficial de EA Web App: Item.move(item, pile))
         try {
+            console.log(`[FC 27 Helper] 📋 Moviendo ${gem.name} (ID de carta: ${item.id}, EA ID: ${eaId}) a Transferibles (pile ${pile})...`, item);
+            let moved = false;
             if (services && services.Item && typeof services.Item.move === 'function') {
-                await callEAService(services.Item.move([item], pile));
-            } else if (win.communication && typeof win.communication.MoveItemDelegate === 'function') {
+                try {
+                    await callEAService(services.Item.move(item, pile));
+                    moved = true;
+                } catch (errSingle) {
+                    console.warn("[FC 27 Helper] Intento directo Item.move(item, pile) falló, probando con [item]:", errSingle);
+                    try {
+                        await callEAService(services.Item.move([item], pile));
+                        moved = true;
+                    } catch (errArr) {
+                        console.warn("[FC 27 Helper] Intento con array falló también:", errArr);
+                        throw errSingle;
+                    }
+                }
+            }
+
+            if (!moved && win.communication && typeof win.communication.MoveItemDelegate === 'function') {
                 await new Promise((res, rej) => {
                     const delegate = new win.communication.MoveItemDelegate([item], pile);
                     delegate.addListener(win.communication.BaseDelegate.SUCCESS, this, () => res());
@@ -2171,18 +2194,24 @@
             console.error("Error al mover a transferibles:", err);
             scheduleDismissEaDialog();
 
-            const errStr = String(err && (err.message || err.statusText || err) || '').toLowerCase();
-            if (errStr.includes('destination full') || errStr.includes('full') || (err && err.status === 403)) {
+            const errStr = String(err && (err.message || err.reason || err.statusText || err) || '').toLowerCase();
+            if (errStr.includes('destination full') || errStr.includes('full') || (err && (err.status === 403 || err.code === 403))) {
                 item.pile = pile;
                 State.transferMatches[eaId] = item;
                 delete State.clubMatches[eaId];
                 renderCurrentTable();
-                if (!silent) notificar(`📋 ${gem.name} ya registrado en Transferibles`, "#00ccff");
+                if (!silent) notificar(`⚠️ Tu lista de transferibles parece llena. Si ya tenías espacio, ${gem.name} quedó registrado en transferibles`, "#ffaa00");
                 return true;
             }
 
+            if (errStr.includes('squad') || errStr.includes('plantilla') || errStr.includes('active')) {
+                if (!silent) notificar(`⚠️ ${gem.name} está asignado a tu plantilla activa. Quítalo de la plantilla para moverlo.`, "#ffaa00");
+                return false;
+            }
+
             if (!silent) {
-                notificar(`No se pudo mover ${gem.name}: ${err.message || err}`, "#ff4444");
+                const detail = err && (err.message || err.reason || err.statusText || (typeof err === 'string' ? err : 'Error en servicio de EA'));
+                notificar(`No se pudo mover ${gem.name}: ${detail}`, "#ff4444");
             }
             return false;
         }
@@ -3101,7 +3130,8 @@
             .futgg-body {
                 flex: 1;
                 overflow-y: auto;
-                padding: 16px 20px;
+                overflow-x: hidden;
+                padding: 12px 14px;
             }
             .futgg-table {
                 width: 100%;
@@ -3110,7 +3140,7 @@
             }
             .futgg-table th {
                 text-align: left;
-                padding: 10px 12px;
+                padding: 8px 6px;
                 background: #131c28;
                 color: #8fa0b5;
                 font-weight: 600;
@@ -3118,11 +3148,11 @@
                 letter-spacing: 0.5px;
                 border-bottom: 1px solid #243346;
                 position: sticky;
-                top: -16px;
+                top: -12px;
                 z-index: 10;
             }
             .futgg-table td {
-                padding: 10px 12px;
+                padding: 8px 6px;
                 border-bottom: 1px solid #1a2535;
                 vertical-align: middle;
             }
@@ -3173,17 +3203,35 @@
             .futgg-player-cell {
                 display: flex;
                 align-items: center;
-                gap: 10px;
+                gap: 6px;
             }
             .futgg-rating {
                 font-weight: bold;
-                font-size: 13px;
-                padding: 2px 6px;
+                font-size: 12px;
+                padding: 2px 4px;
                 border-radius: 4px;
                 background: #202d3e;
                 color: #00ff88;
-                min-width: 24px;
+                min-width: 20px;
                 text-align: center;
+                border: 1px solid #35475e;
+                display: inline-block;
+                flex-shrink: 0;
+            }
+            .futgg-rating.bronze {
+                color: #cd7f32;
+                border-color: #cd7f32;
+                background: rgba(205, 127, 50, 0.18);
+            }
+            .futgg-rating.silver {
+                color: #e2e8f0;
+                border-color: #94a3b8;
+                background: rgba(148, 163, 184, 0.18);
+            }
+            .futgg-rating.gold {
+                color: #ffd700;
+                border-color: #ffd700;
+                background: rgba(255, 215, 0, 0.18);
             }
             .futgg-tag {
                 display: inline-block;
@@ -3199,13 +3247,13 @@
             .futgg-tag.extinct { background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid #ff5555; }
 
             .futgg-price-input {
-                width: 76px;
-                min-width: 70px;
+                width: 62px;
+                min-width: 52px;
                 box-sizing: border-box;
                 background: #131c28;
                 border: 1px solid #35475e;
                 color: #fff;
-                padding: 3px 6px;
+                padding: 2px 4px;
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 700;
@@ -4676,12 +4724,12 @@
             <table class="futgg-table">
                 <thead>
                     <tr>
-                        <th>Jugador</th>
-                        <th>Precio FUT.GG</th>
-                        <th>Estado Club</th>
-                        <th>Mercado en Vivo</th>
-                        <th>Precio de Venta</th>
-                        <th>Acción</th>
+                        <th style="width:20%; min-width:130px;">Jugador</th>
+                        <th style="width:12%; min-width:80px;">Ref. FUT.GG</th>
+                        <th style="width:5%; min-width:38px; text-align:center;" title="Estado en tu Club">Club</th>
+                        <th style="width:27%; min-width:155px;">Mercado en Vivo</th>
+                        <th style="width:18%; min-width:105px;">Precio Venta</th>
+                        <th style="width:18%; min-width:100px; text-align:center;">Acción</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -4725,28 +4773,32 @@
                 itemsRenderedBeforeSelling++;
             }
 
-            // Estado del club
+            // Estado del club (solo emojis con tooltip)
             let clubStatusHtml = '';
             if (selling) {
                 const remainingSec = selling.expiresAt ? Math.max(0, Math.floor((selling.expiresAt - Date.now()) / 1000)) : (selling.expires || 0);
                 const timeStr = formatTimeRemaining(remainingSec);
-                clubStatusHtml = `<span class="futgg-tag selling">🚀 Vendiéndose (${timeStr})</span>`;
+                clubStatusHtml = `
+                    <div style="text-align:center;" title="En venta activa (expira en ${timeStr})">
+                        <span style="font-size:16px; cursor:help;">🚀</span>
+                        <div style="font-size:9px; color:#00ccff; white-space:nowrap; line-height:1; margin-top:1px;">${timeStr}</div>
+                    </div>
+                `;
             } else if (inTransfer) {
-                clubStatusHtml = `<span class="futgg-tag transfer">📋 En Transferibles</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En Lista de Transferibles (listo para listar)">📋</span></div>`;
             } else if (inClub) {
                 const isTradeable = isItemTradeable(inClub);
                 clubStatusHtml = isTradeable
-                    ? `<span class="futgg-tag club">🟢 En Club (Tradeable)</span>`
-                    : `<span class="futgg-tag extinct" title="No se puede vender en el mercado">🔒 Intransferible</span>`;
+                    ? `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Tradeable / Transferible)">🟢</span></div>`
+                    : `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Intransferible)">🔒</span></div>`;
             } else if (sold) {
-                clubStatusHtml = `<span class="futgg-tag" style="background:rgba(100,116,139,0.2); color:#94a3b8; border:1px solid #64748b;">✅ Ya Vendido</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="Ya vendido">✅</span></div>`;
             } else if (hasScanned) {
-                clubStatusHtml = `<span class="futgg-tag" style="background:rgba(100,116,139,0.2); color:#94a3b8; border:1px solid #64748b;">⚪ Fuera del Club</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="Fuera del Club">⚪</span></div>`;
             } else {
                 clubStatusHtml = `
-                    <div style="display:flex; align-items:center; gap:6px;">
-                        <span class="futgg-tag none">⚪ No escaneado</span>
-                        <button class="futgg-btn" style="padding:2px 6px; font-size:10px;" data-action="search-club" data-eaid="${eaId}" title="Buscar en mi club">🔍</button>
+                    <div style="text-align:center;">
+                        <button class="futgg-btn" style="padding:2px 5px; font-size:10px;" data-action="search-club" data-eaid="${eaId}" title="Buscar en mi club">🔍</button>
                     </div>
                 `;
             }
@@ -4924,14 +4976,14 @@
                 <tr class="${rowClass}" data-eaid="${eaId}" id="futgg-row-${eaId}">
                     <td>
                         <div class="futgg-player-cell">
-                            <span class="futgg-rating">${gem.rating || '---'}</span>
-                            <div>
-                                <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:6px;">
-                                    <span>${gem.name}</span>
-                                    ${selling ? '<span class="futgg-tag selling" style="font-size:10px; font-weight:800; padding:1px 6px;">🚀 EN VENTA</span>' : ''}
-                                    ${State.newGemIds && State.newGemIds.has(eaId) ? '<span class="futgg-new-badge">✨ NUEVA</span>' : ''}
+                            <span class="futgg-rating ${gem.quality || (gem.rating <= 64 ? 'bronze' : (gem.rating <= 74 ? 'silver' : 'gold'))}">${gem.rating || '---'}</span>
+                            <div style="min-width:0;">
+                                <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                    <span style="overflow:hidden; text-overflow:ellipsis;">${gem.name}</span>
+                                    ${selling ? '<span class="futgg-tag selling" style="font-size:9px; font-weight:800; padding:1px 4px; flex-shrink:0;">🚀 VENTA</span>' : ''}
+                                    ${State.newGemIds && State.newGemIds.has(eaId) ? '<span class="futgg-new-badge" style="flex-shrink:0;">✨</span>' : ''}
                                 </div>
-                                <div style="font-size:11px; color:#8fa0b5;">${gem.club || 'Club'} (ID: ${eaId})</div>
+                                <div style="font-size:10px; color:#8fa0b5; margin-top:1px;">${gem.club || 'Club'} (ID: ${eaId})</div>
                             </div>
                         </div>
                     </td>
@@ -4939,10 +4991,10 @@
                         <div style="font-weight:700; color:#ffcc00;">${formatCoins(gem.estimatedPrice)}</div>
                         <div style="font-size:10px; color:#00ff88;">+${formatCoins(gem.profit)} benef.</div>
                     </td>
-                    <td>${clubStatusHtml}</td>
+                    <td style="text-align:center; padding:6px 2px;">${clubStatusHtml}</td>
                     <td>${marketHtml}</td>
                     <td>${priceColHtml}</td>
-                    <td>${actionHtml}</td>
+                    <td style="text-align:center;">${actionHtml}</td>
                 </tr>
             `;
         }
@@ -5077,13 +5129,13 @@
             <table class="futgg-table">
                 <thead>
                     <tr>
-                        <th style="width:19%; min-width:140px;">Jugador SBC</th>
-                        <th style="width:13%; min-width:105px;">En Mi Club</th>
-                        <th style="width:12%; min-width:90px;">Frecuencia SBC</th>
-                        <th style="width:11%; min-width:85px;">Ref. FUTBIN / GG</th>
-                        <th style="width:22%; min-width:160px;">Mercado Real (EA)</th>
-                        <th style="width:15%; min-width:130px;">Listar Por</th>
-                        <th style="width:8%; min-width:75px; text-align:center;">Acción</th>
+                        <th style="width:17%; min-width:115px;">Jugador SBC</th>
+                        <th style="width:5%; min-width:38px; text-align:center;" title="Estado en tu Club">Club</th>
+                        <th style="width:10%; min-width:68px;">Frec. SBC</th>
+                        <th style="width:9%; min-width:65px;">Ref. GG</th>
+                        <th style="width:25%; min-width:150px;">Mercado Real (EA)</th>
+                        <th style="width:14%; min-width:95px;">Listar Por</th>
+                        <th style="width:10%; min-width:85px; text-align:center;">Acción</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -5097,30 +5149,30 @@
             const sold = State.soldMatches[eaId];
             const market = State.marketPrices[eaId];
 
-            // Estado en Club
+            // Estado en Club (solo emojis con tooltip)
             let clubStatusHtml = '';
             if (selling) {
                 const expiresMin = formatTimeRemaining(selling.expires);
                 clubStatusHtml = `
-                    <span class="futgg-tag selling" title="En venta activa a ${formatCoins(selling.buyNow)}. Expira en ${expiresMin}">
-                        🚀 En Venta (${formatCoins(selling.buyNow)})
-                    </span>
-                    <div style="font-size:10px; color:#00ccff; margin-top:2px;">⏱️ ${expiresMin}</div>
+                    <div style="text-align:center;" title="En venta activa por ${formatCoins(selling.buyNow)} (expira en ${expiresMin})">
+                        <span style="font-size:16px; cursor:help;">🚀</span>
+                        <div style="font-size:9px; color:#00ccff; white-space:nowrap; line-height:1; margin-top:1px;">${expiresMin}</div>
+                    </div>
                 `;
             } else if (inTransfer) {
-                clubStatusHtml = `<span class="futgg-tag transfer" title="Listo en Lista de Transferibles para ser listado">📋 En Transferibles</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En Lista de Transferibles (listo para listar)">📋</span></div>`;
             } else if (inClub && isItemTradeable(inClub)) {
-                clubStatusHtml = `<span class="futgg-tag club" title="En el Club (Transferible)">✓ En Club (Tradeable)</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Tradeable / Transferible)">🟢</span></div>`;
             } else if (inClub && !isItemTradeable(inClub)) {
-                clubStatusHtml = `<span class="futgg-tag none" title="En el Club pero Intransferible">🔒 Intransferible</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="En tu Club (Intransferible)">🔒</span></div>`;
             } else if (sold) {
-                clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;">✅ Ya Vendido</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="Ya vendido">✅</span></div>`;
             } else if (State.isScanningClub && !State.clubScanned[eaId]) {
-                clubStatusHtml = `<span class="futgg-tag none" style="color:#00ccff; font-weight:700;">⏳ Comprobando...</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; cursor:help;" title="Comprobando club...">⏳</span></div>`;
             } else if (State.clubScanned[eaId]) {
-                clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;" title="Búsqueda realizada: no se encontró en tu club">✕ Fuera de Club</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="No encontrado en tu club">⚪</span></div>`;
             } else {
-                clubStatusHtml = `<span class="futgg-tag none" style="color:#8fa0b5; font-style:italic;" title="En cola para verificación automática">⏳ Pendiente...</span>`;
+                clubStatusHtml = `<div style="text-align:center;"><span style="font-size:16px; opacity:0.35; cursor:help;" title="Pendiente de comprobar">❓</span></div>`;
             }
 
             // Frecuencia en Soluciones
@@ -5343,18 +5395,17 @@
                 <tr class="${rowClass}" data-eaid="${eaId}" id="futgg-row-${eaId}">
                     <td>
                         <div class="futgg-player-cell">
-                            <span class="futgg-rating">${p.rating || '---'}</span>
-                            <div>
-                                <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:6px;">
-                                    <span>${p.name}</span>
-                                    ${qBadge}
-                                    <span style="font-size:10px; color:#00ff88; font-weight:800;">${p.position || ''}</span>
+                            <span class="futgg-rating ${qClass}">${p.rating || '---'}</span>
+                            <div style="min-width:0;">
+                                <div style="font-weight:700; color:#fff; display:flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${p.name} (${p.position || ''})">
+                                    <span style="overflow:hidden; text-overflow:ellipsis;">${p.name}</span>
+                                    <span style="font-size:10px; color:#00ff88; font-weight:800; flex-shrink:0;">${p.position || ''}</span>
                                 </div>
-                                <div style="font-size:10px; color:#8fa0b5;">ID: ${eaId}</div>
+                                <div style="font-size:10px; color:#8fa0b5; margin-top:1px;">ID: ${eaId}</div>
                             </div>
                         </div>
                     </td>
-                    <td>${clubStatusHtml}</td>
+                    <td style="text-align:center; padding:6px 2px;">${clubStatusHtml}</td>
                     <td>${freqHtml}</td>
                     <td>
                         ${(p.futggPrice && p.futggPrice > 0) ? `
