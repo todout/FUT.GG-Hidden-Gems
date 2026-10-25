@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.15.2
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: detección robusta de SBCs, soporte para Partidos de Marquesina, Spooky Nights, Scary Candy y navegación sin errores.
+// @version      1.15.3
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: catálogo canónico asegurado con Spooky Nights, Scary Candy y Marquesinas, soporte multi-perfil y navegación sin errores.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1561,38 +1561,48 @@
         { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Master Puzzle", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/12/master-puzzle" }
     ];
 
+    const SCRIPT_CATALOG_VERSION = "1.15.3";
+
     function getFutbinSbcCatalog() {
         try {
             const saved = GM_getValue('futbin_sbc_catalog', null);
-            let merged = [];
+
+            // 1. Empezar SIEMPRE con el catálogo oficial como base canónica asegurada
+            const catalog = DEFAULT_FUTBIN_SBC_CATALOG.map(item => Object.assign({}, item));
+
+            // 2. Si hay entradas guardadas de sesiones anteriores, incorporar las personalizadas o detectadas
             if (Array.isArray(saved) && saved.length > 0) {
-                // Filtrar entradas huérfanas o con URLs obsoletas/erróneas (incluyendo /home o 98/99 sin slug)
-                merged = saved.filter(m => m && m.url &&
-                    !m.url.toLowerCase().includes('/challenges/home') &&
-                    !m.url.toLowerCase().endsWith('/home') &&
-                    !m.url.includes('/squad-building-challenge/ea/') &&
-                    !m.url.includes('/72/Spooky') &&
-                    !m.url.includes('/72/spooky') &&
-                    !m.url.includes('/Challenges/59') &&
-                    !m.url.includes('/Challenges/60') &&
-                    !m.url.endsWith('/60') &&
-                    !m.url.endsWith('/Challenges/98') &&
-                    !m.url.endsWith('/Challenges/99') &&
-                    !m.url.endsWith('/squad-building-challenges/Challenges') &&
-                    !m.url.endsWith('/squad-building-challenges/Challenges/') &&
-                    !m.url.endsWith('/squad-building-challenges')
-                );
-            }
-            for (const d of DEFAULT_FUTBIN_SBC_CATALOG) {
-                const idx = merged.findIndex(m => m.title && m.title.toLowerCase().replace(/[^a-z0-9]/g, '') === d.title.toLowerCase().replace(/[^a-z0-9]/g, ''));
-                if (idx >= 0) {
-                    merged[idx] = d;
-                } else if (!merged.some(m => m.url.toLowerCase() === d.url.toLowerCase())) {
-                    merged.push(d);
+                for (const item of saved) {
+                    if (!item || !item.url) continue;
+                    const u = item.url.toLowerCase().split('?')[0].split('#')[0];
+                    if (u.includes('/challenges/home') || u.endsWith('/home') ||
+                        u.includes('/squad-building-challenge/ea/') ||
+                        u.includes('/72/spooky') ||
+                        u.includes('/challenges/59') || u.includes('/challenges/60') ||
+                        u.endsWith('/60') ||
+                        u.endsWith('/challenges/98') || u.endsWith('/challenges/99') ||
+                        u.endsWith('/squad-building-challenges') ||
+                        u.endsWith('/squad-building-challenges/challenges') ||
+                        u.endsWith('/squad-building-challenges/challenges/')) {
+                        continue;
+                    }
+
+                    // Verificar si ya existe en la base por URL o por título normalizado
+                    const normTitle = (item.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const exists = catalog.some(c => 
+                        c.url.toLowerCase() === u ||
+                        (c.title && c.title.toLowerCase().replace(/[^a-z0-9]/g, '') === normTitle)
+                    );
+
+                    if (!exists) {
+                        catalog.push(item);
+                    }
                 }
             }
-            GM_setValue('futbin_sbc_catalog', merged);
-            return merged;
+
+            GM_setValue('futbin_sbc_catalog', catalog);
+            GM_setValue('futbin_sbc_catalog_version', SCRIPT_CATALOG_VERSION);
+            return catalog;
         } catch (e) {
             return DEFAULT_FUTBIN_SBC_CATALOG;
         }
@@ -5209,13 +5219,15 @@
         const refreshCatalogBtn = document.getElementById('futbin-sbc-refresh-catalog-btn');
         if (refreshCatalogBtn) {
             refreshCatalogBtn.onclick = async () => {
-                notificar("🔄 Consultando desafíos activos en FUTBIN y Web App...", "#00ccff");
+                notificar("🔄 Restableciendo catálogo oficial y consultando nuevos desafíos...", "#00ccff");
+                GM_setValue('futbin_sbc_catalog', DEFAULT_FUTBIN_SBC_CATALOG);
+                renderFutbinSbcSelectOptions();
                 const list = await fetchFutbinChallengesCatalogRemote();
                 renderFutbinSbcSelectOptions();
                 if (list && list.length > 0) {
                     notificar(`🟢 ¡${list.length} desafíos SBC disponibles en el selector!`, "#00ff88");
                 } else {
-                    notificar("No se pudo conectar directamente con FUTBIN. Abre la web y se guardarán automáticamente.", "#ffaa00");
+                    notificar("Catálogo restablecido con éxito.", "#00ff88");
                 }
             };
         }
