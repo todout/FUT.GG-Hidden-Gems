@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.13.0
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: integración con caché de Paletools (0 peticiones), escaneo multi-defId, corrección de solapamiento de columnas y listado unificado con lectura directa de precio.
+// @version      1.14.0
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: análisis directo de SBC desde el menú, corrección de URLs, navegación estable sin pérdida de foco/scroll y caché Paletools.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -327,6 +327,185 @@
         setInterval(captureFutGgToken, 60000); // Chequeo suave cada 60s
         setInterval(checkAndClickFutGgSyncButton, 10000); // Auto-detección de Sync Club en fut.gg cada 10s
         return; // No ejecutar la UI de la Web App en la web de fut.gg
+    }
+
+    // =========================================================================
+    // PARSER UNIVERSAL DE JUGADORES DESDE PLANTILLAS SBC DE FUTBIN
+    // =========================================================================
+    function parsePlayersFromSquadDoc(doc, htmlText = '', squadIndex = 1) {
+        const players = [];
+        const seenInThisSquad = new Set();
+        let squadData = null;
+
+        // 1. Extraer directamente desde los tags <script> del DOM (si doc fue parseado)
+        if (doc && typeof doc.querySelectorAll === 'function') {
+            const scripts = Array.from(doc.querySelectorAll('script'));
+            for (const s of scripts) {
+                const txt = (s.textContent || '').trim();
+                if (txt.includes('"squadData"') && txt.includes('"squad"')) {
+                    try {
+                        const parsed = JSON.parse(txt);
+                        if (parsed && parsed.squadData && Array.isArray(parsed.squadData.squad)) {
+                            squadData = parsed.squadData;
+                            break;
+                        }
+                    } catch (e) { }
+                }
+            }
+        }
+
+        // 2. Si no se encontró en doc, extraer de htmlText mediante regex de scripts
+        if (!squadData && htmlText) {
+            const scriptRegex = /<script[^>]*>([\s\S]*?"squadData"[\s\S]*?)<\/script>/gi;
+            let match;
+            while ((match = scriptRegex.exec(htmlText)) !== null) {
+                try {
+                    const parsed = JSON.parse(match[1]);
+                    if (parsed && parsed.squadData && Array.isArray(parsed.squadData.squad)) {
+                        squadData = parsed.squadData;
+                        break;
+                    }
+                } catch (e) { }
+            }
+        }
+
+        // 3. Procesar datos 100% nativos del JSON estructurado de FUTBIN
+        if (squadData && Array.isArray(squadData.squad)) {
+            for (const item of squadData.squad) {
+                if (!item || (!item.playerName && (!item.statsCard || !item.statsCard.cardname))) continue;
+
+                const name = (item.playerName || item.statsCard?.cardname || '').trim();
+                if (!name || name === 'Add Player' || name.includes('Coin')) continue;
+
+                const rating = parseInt(item.statsCard?.rating || item.rating || 0, 10);
+                const position = (item.statsCard?.playerPositions?.main || item.statsCard?.position || item.position?.value || '').toUpperCase();
+                const futbinId = item.id?.playerCardId?.value || item.baseId?.value || null;
+
+                // Extraer EA Asset ID real de las URLs oficiales de imagen de FUTBIN (/players/{eaId}.png)
+                let eaId = null;
+                const imgUrls = [
+                    item.playerImage?.fixed?.url?.image1x,
+                    item.playerImage?.fixed?.url?.image2x,
+                    item.statsCard?.playerImages?.playerImage?.fixed?.url?.image1x,
+                    item.statsCard?.playerImages?.playerImage?.fixed?.url?.image2x
+                ];
+                for (const u of imgUrls) {
+                    if (typeof u === 'string') {
+                        const m = u.match(/\/players\/(\d+)\.png/i);
+                        if (m) {
+                            eaId = Number(m[1]);
+                            break;
+                        }
+                    }
+                }
+
+                if (!eaId && item.eaId) eaId = Number(item.eaId);
+                if (!eaId && item.resourceId) eaId = Number(item.resourceId);
+                if (!eaId && item.defId) eaId = Number(item.defId);
+                if (!eaId && futbinId && futbinId >= 50000) eaId = futbinId;
+
+                const uniqueKey = eaId || futbinId || name;
+                if (!uniqueKey || seenInThisSquad.has(uniqueKey)) continue;
+                seenInThisSquad.add(uniqueKey);
+
+                // Precio exacto reportado por FUTBIN para la plataforma (PlayStation/PC)
+                const futbinPrice = parseInt(item.priceCard?.priceData?.psPrice || item.priceCard?.priceData?.pcPrice || item.priceCard?.priceData?.price || 0, 10);
+                const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
+                const estimatedPrice = futbinPrice > 0 ? futbinPrice : (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700));
+
+                players.push({
+                    eaId: eaId || futbinId,
+                    realEaId: eaId,
+                    futbinId: futbinId,
+                    name: name,
+                    rating: rating,
+                    position: position,
+                    quality: quality,
+                    futbinPrice: futbinPrice,
+                    estimatedPrice: estimatedPrice,
+                    squadIndex: squadIndex
+                });
+            }
+        }
+
+        // 4. Fallback ÚNICAMENTE a contenedores #cardlid1..11 si el JSON no estuviera disponible (ej. DOM completamente hidratado en vivo)
+        if (players.length === 0 && doc && typeof doc.querySelectorAll === 'function') {
+            const cardContainers = Array.from(doc.querySelectorAll('#cardlid1, #cardlid2, #cardlid3, #cardlid4, #cardlid5, #cardlid6, #cardlid7, #cardlid8, #cardlid9, #cardlid10, #cardlid11'));
+            for (const el of cardContainers) {
+                const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name');
+                let name = (nameEl ? nameEl.textContent : '').trim().split('\n')[0].trim();
+                if (!name || name.includes('Coin') || name === 'Add Player') continue;
+
+                let eaId = null;
+                let futbinId = null;
+                const link = el.querySelector('a[href*="/player/"]');
+                if (link && link.href) {
+                    const mLink = link.href.match(/\/player\/(\d+)/i);
+                    if (mLink) futbinId = Number(mLink[1]);
+                }
+
+                const allImgs = Array.from(el.querySelectorAll('img, .playercard-27-base-img, [style*="/players/"]'));
+                for (const im of allImgs) {
+                    const attrs = [im.getAttribute('src'), im.getAttribute('data-src'), im.getAttribute('srcset'), im.src, im.style ? im.style.backgroundImage : null];
+                    for (const attr of attrs) {
+                        if (attr) {
+                            const m = attr.match(/\/players\/(\d+)\.png/i);
+                            if (m) {
+                                eaId = Number(m[1]);
+                                break;
+                            }
+                        }
+                    }
+                    if (eaId) break;
+                }
+
+                if (!eaId && futbinId && futbinId >= 50000) eaId = futbinId;
+                const uniqueKey = eaId || futbinId || name;
+                if (!uniqueKey || seenInThisSquad.has(uniqueKey)) continue;
+                seenInThisSquad.add(uniqueKey);
+
+                const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
+                let rating = 0;
+                if (ratingEl) {
+                    const rMatch = ratingEl.textContent.match(/\d+/);
+                    if (rMatch) rating = parseInt(rMatch[0], 10);
+                }
+
+                const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
+                const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
+
+                const priceEl = el.querySelector('.price-segment, .player-price, .platform-price-wrapper-small, .price');
+                let futbinPrice = 0;
+                if (priceEl) {
+                    const pText = priceEl.textContent.replace(/,/g, '').replace(/🪙/g, '').trim();
+                    const pMatch = pText.match(/(\d+(\.\d+)?[kKmM]?)/);
+                    if (pMatch) {
+                        const rawVal = pMatch[1].toLowerCase();
+                        if (rawVal.endsWith('k')) futbinPrice = Math.round(parseFloat(rawVal) * 1000);
+                        else if (rawVal.endsWith('m')) futbinPrice = Math.round(parseFloat(rawVal) * 1000000);
+                        else futbinPrice = parseInt(rawVal, 10);
+                    }
+                }
+
+                const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
+                const estimatedPrice = futbinPrice > 0 ? futbinPrice : (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700));
+
+                players.push({
+                    eaId: eaId || futbinId,
+                    realEaId: eaId,
+                    futbinId: futbinId,
+                    name: name,
+                    rating: rating,
+                    position: position,
+                    quality: quality,
+                    futbinPrice: futbinPrice,
+                    estimatedPrice: estimatedPrice,
+                    squadIndex: squadIndex
+                });
+            }
+        }
+
+        return players;
     }
 
     // =========================================================================
@@ -1332,13 +1511,11 @@
 
     const DEFAULT_FUTBIN_SBC_CATALOG = [
         // Spooky Nights
-        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenge/ea/72/Spooky%20Nights" },
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights" },
 
-        // Partidos de Marquesina (Marquee Matchups - 4 desafíos individuales)
-        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: PSG v Olympique Lyonnais", url: "https://www.futbin.com/27/squad-building-challenge/ea/96/PSG%20v%20Olympique%20Lyonnais" },
-        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: SSC Napoli v AS Roma", url: "https://www.futbin.com/27/squad-building-challenge/ea/97/SSC%20Napoli%20v%20AS%20Roma" },
-        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: Chelsea v Tottenham Hotspur", url: "https://www.futbin.com/27/squad-building-challenge/ea/98/Chelsea%20v%20Tottenham%20Hotspur" },
-        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: FC Barcelona v Real Madrid", url: "https://www.futbin.com/27/squad-building-challenge/ea/99/FC%20Barcelona%20v%20Real%20Madrid" },
+        // Partidos de Marquesina (Marquee Matchups)
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: Desafío 1", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/59" },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: Desafío 2", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/60" },
 
         // Híbrido de Ligas (Hybrid Leagues - 4 desafíos individuales)
         { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Give Me Five", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/1/give-me-five" },
@@ -1362,19 +1539,31 @@
     function getFutbinSbcCatalog() {
         try {
             const saved = GM_getValue('futbin_sbc_catalog', null);
+            let merged = [];
             if (Array.isArray(saved) && saved.length > 0) {
-                // Filtrar entradas huérfanas que no tengan soluciones (ej. que apunten al hub /Challenges o a grupos)
-                const cleanedSaved = saved.filter(m => m && m.url && !m.url.endsWith('/squad-building-challenges/Challenges') && !m.url.endsWith('/squad-building-challenges/Challenges/'));
-                const merged = [...cleanedSaved];
-                for (const d of DEFAULT_FUTBIN_SBC_CATALOG) {
-                    if (!merged.some(m => m.url.toLowerCase() === d.url.toLowerCase() || (m.title && m.title.toLowerCase() === d.title.toLowerCase()))) {
-                        merged.push(d);
-                    }
-                }
-                return merged;
+                // Filtrar entradas huérfanas o con URLs obsoletas/erróneas
+                merged = saved.filter(m => m && m.url &&
+                    !m.url.includes('/squad-building-challenge/ea/') &&
+                    !m.url.includes('/72/Spooky') &&
+                    !m.url.includes('/72/spooky') &&
+                    !m.url.endsWith('/squad-building-challenges/Challenges') &&
+                    !m.url.endsWith('/squad-building-challenges/Challenges/') &&
+                    !m.url.endsWith('/squad-building-challenges')
+                );
             }
-        } catch (e) { }
-        return DEFAULT_FUTBIN_SBC_CATALOG;
+            for (const d of DEFAULT_FUTBIN_SBC_CATALOG) {
+                const idx = merged.findIndex(m => m.title && m.title.toLowerCase().replace(/[^a-z0-9]/g, '') === d.title.toLowerCase().replace(/[^a-z0-9]/g, ''));
+                if (idx >= 0) {
+                    merged[idx] = d;
+                } else if (!merged.some(m => m.url.toLowerCase() === d.url.toLowerCase())) {
+                    merged.push(d);
+                }
+            }
+            GM_setValue('futbin_sbc_catalog', merged);
+            return merged;
+        } catch (e) {
+            return DEFAULT_FUTBIN_SBC_CATALOG;
+        }
     }
 
     function serializeItemForStorage(it) {
@@ -2173,7 +2362,6 @@
         }
 
         const eaId = Number(gem.eaId);
-        State.focusedGemId = eaId; // Mantener foco visual en esta carta tras reordenar
         State.abortMarketCrawl[eaId] = false;
         if (!isAutomated) State.forceCancelAllOperations = false;
         State.marketPrices[eaId] = {
@@ -2183,7 +2371,7 @@
             filterType: forceOpen ? 'open' : 'tight',
             count: 0
         };
-        State.openPriceBreakdowns[eaId] = true;
+        State.openPriceBreakdowns[eaId] = false;
         renderCurrentTable();
         notificar(`🔍 Consultando mercado de ${gem.name}...`, "#00ccff");
 
@@ -2753,6 +2941,7 @@
                 buyNow: validBuyNow
             };
             State.marketPrices[eaId] = { listed: true, price: validBuyNow };
+            State.focusedGemId = null; // Evitar scroll al fondo para mantener el foco en la carta siguiente
             persistFutbinState();
             renderCurrentTable();
             notificar(`🚀 ¡${gem.name} listado por ${formatCoins(validBuyNow)}! (Puja: ${formatCoins(startBid)})`, "#00ff88");
@@ -3273,9 +3462,159 @@
         });
     }
 
+    // Descarga en segundo plano de soluciones comunitarias desde la Web App (sin abrir pestaña)
+    function fetchFutbinSbcBackground(challengeUrl, solutionCount = 5) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest !== 'function') {
+                return reject(new Error("GM_xmlhttpRequest no disponible"));
+            }
+
+            console.log(`[FUTBIN Helper] ⚡ Iniciando descarga en segundo plano de: ${challengeUrl} (${solutionCount} soluciones)...`);
+            updateBatchStatus(`Conectando con FUTBIN para ${solutionCount} soluciones...`);
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: challengeUrl,
+                headers: {
+                    'User-Agent': navigator.userAgent,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                },
+                onload: async function (res) {
+                    if (res.status !== 200 || !res.responseText) {
+                        return reject(new Error(`HTTP ${res.status} al conectar con página de desafío FUTBIN`));
+                    }
+
+                    try {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(res.responseText, 'text/html');
+
+                        // 1. Extraer título del desafío
+                        const titleEl = doc.querySelector('h1, .challenge-name, .sbc-header-title');
+                        let challengeTitle = titleEl ? titleEl.textContent.replace(/sbc/i, '').trim() : '';
+                        if (!challengeTitle) {
+                            const docTitle = doc.title || '';
+                            const m = docTitle.match(/CHALLENGES\s*-\s*([^|]+)/i) || docTitle.match(/([^|]+)\|\s*FUTBIN/i);
+                            challengeTitle = (m && m[1].trim()) || 'SBC Challenge';
+                        }
+
+                        // 2. Extraer URLs de soluciones comunitarias
+                        const allLinks = Array.from(doc.querySelectorAll('a[href*="/27/squad/"][href*="/sbc"], a[href*="/27/squad/"]'))
+                            .map(a => a.getAttribute('href') || a.href)
+                            .filter(href => href && /\/27\/squad\/\d+/.test(href));
+
+                        const uniqueUrls = [];
+                        for (const raw of allLinks) {
+                            const full = raw.startsWith('http') ? raw : `https://www.futbin.com${raw.startsWith('/') ? '' : '/'}${raw}`;
+                            const clean = full.split('?')[0].split('#')[0];
+                            const sbcUrl = clean.endsWith('/sbc') ? clean : clean + '/sbc';
+                            if (!uniqueUrls.includes(sbcUrl)) {
+                                uniqueUrls.push(sbcUrl);
+                            }
+                        }
+
+                        const solutionUrls = uniqueUrls.slice(0, solutionCount);
+                        if (solutionUrls.length === 0) {
+                            return reject(new Error("No se encontraron soluciones de plantilla en el HTML de FUTBIN"));
+                        }
+
+                        console.log(`[FUTBIN Helper] 📋 Se encontraron ${solutionUrls.length} soluciones comunitarias. Descargando...`);
+
+                        const playerMap = new Map();
+
+                        for (let i = 0; i < solutionUrls.length; i++) {
+                            const sUrl = solutionUrls[i];
+                            updateBatchStatus(`Descargando solución ${i + 1}/${solutionUrls.length}...`);
+
+                            const sRes = await new Promise(r => {
+                                GM_xmlhttpRequest({
+                                    method: 'GET',
+                                    url: sUrl,
+                                    headers: {
+                                        'User-Agent': navigator.userAgent,
+                                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                                    },
+                                    onload: r,
+                                    onerror: () => r(null)
+                                });
+                            });
+
+                            if (!sRes || sRes.status !== 200 || !sRes.responseText) {
+                                console.warn(`[FUTBIN Helper] Error al descargar solución ${sUrl}`);
+                                continue;
+                            }
+
+                            const sHtml = sRes.responseText;
+                            const sDoc = parser.parseFromString(sHtml, 'text/html');
+                            const squadPlayers = parsePlayersFromSquadDoc(sDoc, sHtml, i + 1);
+
+                            for (const p of squadPlayers) {
+                                if (!playerMap.has(p.eaId)) {
+                                    playerMap.set(p.eaId, {
+                                        eaId: p.eaId,
+                                        name: p.name,
+                                        rating: p.rating,
+                                        position: p.position,
+                                        quality: p.quality,
+                                        futbinPrice: p.futbinPrice,
+                                        estimatedPrice: p.futbinPrice || (p.quality === 'bronze' ? 200 : (p.quality === 'silver' ? 350 : 700)),
+                                        frequency: 1,
+                                        solutions: [i + 1],
+                                        squadUrl: sUrl
+                                    });
+                                } else {
+                                    const existing = playerMap.get(p.eaId);
+                                    existing.frequency += 1;
+                                    if (!existing.solutions.includes(i + 1)) {
+                                        existing.solutions.push(i + 1);
+                                    }
+                                    if (p.futbinPrice > 0 && (!existing.futbinPrice || p.futbinPrice > existing.futbinPrice)) {
+                                        existing.futbinPrice = p.futbinPrice;
+                                        existing.estimatedPrice = p.futbinPrice;
+                                    }
+                                }
+                            }
+
+                            if (i < solutionUrls.length - 1) {
+                                await new Promise(r => setTimeout(r, 200));
+                            }
+                        }
+
+                        const aggregatedPlayers = Array.from(playerMap.values());
+                        if (aggregatedPlayers.length === 0) {
+                            return reject(new Error("No se pudieron extraer jugadores de las soluciones"));
+                        }
+
+                        aggregatedPlayers.sort((a, b) => {
+                            if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+                            const qPrio = { 'bronze': 1, 'silver': 2, 'gold': 3 };
+                            const qA = qPrio[a.quality] || 4;
+                            const qB = qPrio[b.quality] || 4;
+                            if (qA !== qB) return qA - qB;
+                            return a.rating - b.rating;
+                        });
+
+                        const payload = {
+                            challengeTitle: challengeTitle,
+                            challengeUrl: challengeUrl,
+                            solutionCount: solutionCount,
+                            totalSolutionsFound: solutionUrls.length,
+                            syncedAt: new Date().toLocaleTimeString(),
+                            players: aggregatedPlayers
+                        };
+
+                        resolve(payload);
+                    } catch (err) {
+                        reject(err);
+                    }
+                },
+                onerror: () => reject(new Error("Fallo de red en GM_xmlhttpRequest a FUTBIN"))
+            });
+        });
+    }
+
     async function fetchFutbinSbcDirectly(rawUrl, solutionCount = 5) {
         if (!rawUrl) {
-            notificar("Ingresa una URL o ID de desafío de FUTBIN", "#ffaa00");
+            notificar("Elige un desafío o pega una URL de FUTBIN", "#ffaa00");
             return;
         }
 
@@ -3286,11 +3625,45 @@
             cleanUrl = `https://www.futbin.com${cleanUrl.startsWith('/') ? '' : '/'}${cleanUrl}`;
         }
 
+        // Sanitizar URLs con IDs o slugs desactualizados
+        if (cleanUrl.includes('/72/Spooky') || cleanUrl.includes('/72/spooky')) {
+            cleanUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+        }
+
+        notificar(`⚡ Analizando soluciones de FUTBIN (${solutionCount} sol.)...`, "#00ccff");
+        State.isBatchRunning = true;
+        renderBatchControls();
+
+        // 1. Intentar descarga en segundo plano directamente en este menú (sin abrir pestañas)
         try {
+            updateBatchStatus(`Descargando datos del SBC desde FUTBIN...`);
+            const data = await fetchFutbinSbcBackground(cleanUrl, solutionCount);
+            if (data && data.players && data.players.length > 0) {
+                State.isBatchRunning = false;
+                renderBatchControls();
+                State.futbinSbcData = data;
+                persistFutbinState();
+                updateFutbinTabBadge();
+                matchFutbinPlayersWithKnownItems();
+                renderFutbinSbcTable();
+                renderFutbinSbcSelectOptions();
+                notificar(`🟢 ¡${data.players.length} jugadores cargados del SBC "${data.challengeTitle || 'SBC'}"!`, "#00ff88");
+                return;
+            }
+        } catch (eBg) {
+            console.warn("[FUTBIN Helper] Descarga directa en segundo plano falló, recurriendo al puente de pestaña rápida:", eBg);
+        } finally {
+            State.isBatchRunning = false;
+            renderBatchControls();
+        }
+
+        // 2. Si falló la descarga en segundo plano (ej: Cloudflare), recurrir a la pestaña rápida del usuario
+        try {
+            updateBatchStatus(`Sincronizando mediante pestaña activa de Chrome...`);
             await runFutbinAutoSyncBridge(cleanUrl, solutionCount);
         } catch (err) {
             console.error("[FUTBIN Helper] Error en puente de sincronización:", err);
-            notificar("💡 Si no se abrió la pestaña, abre FUTBIN manualmente y haz clic en '⚡ Enviar a Web App'.", "#ffaa00");
+            notificar("💡 Si no se abrió la pestaña, abre FUTBIN y haz clic en '⚡ Enviar a Web App'.", "#ffaa00");
         }
     }
 
@@ -4395,27 +4768,28 @@
 
             <!-- Toolbar para Soluciones SBC de FUTBIN -->
             <div id="futbin-sbc-toolbar" class="futgg-toolbar" style="display:none; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center;">
-                <!-- Selección de Desafío SBC -->
-                <div style="display:flex; align-items:center; gap:6px; background:#162232; padding:4px 8px; border-radius:8px; border:1px solid #23344a;">
+                <!-- Selección y Análisis Directo de Desafío SBC -->
+                <div style="display:flex; align-items:center; gap:6px; background:#162232; padding:4px 8px; border-radius:8px; border:1px solid #23344a; flex-wrap:wrap;">
                     <span style="font-size:10px; font-weight:800; color:#00ff88; text-transform:uppercase;">🏆 Desafío:</span>
-                    <select id="futbin-sbc-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px; max-width:210px; cursor:pointer;" title="Selecciona un desafío de FUTBIN o elige URL personalizada">
+                    <select id="futbin-sbc-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px; min-width:180px; max-width:240px; cursor:pointer;" title="Selecciona un desafío de FUTBIN">
                         <!-- Rellenado dinámicamente -->
                     </select>
-                    <button class="futgg-btn" id="futbin-sbc-open-web-btn" style="padding:2px 7px; font-size:11px;" title="Abrir página de desafíos en FUTBIN en nueva pestaña">🌐</button>
-                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:2px 7px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN">🔄</button>
+                    <span style="font-size:10px; font-weight:700; color:#8fa0b5;">Soluciones:</span>
+                    <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
+                        <option value="1">Top 1</option>
+                        <option value="3">Top 3</option>
+                        <option value="5" selected>Top 5 (Recomendado)</option>
+                        <option value="10">Top 10</option>
+                    </select>
+                    <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:4px 12px; font-size:11px; font-weight:700; white-space:nowrap;" title="Descargar y analizar soluciones comunitarias directamente desde este menú">⚡ Analizar SBC</button>
+                    <button class="futgg-btn" id="futbin-sbc-open-web-btn" style="padding:4px 8px; font-size:11px;" title="Abrir página del desafío en FUTBIN en una nueva pestaña">🌐 Abrir Web</button>
+                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:4px 8px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN">🔄</button>
+                    <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:4px 8px; font-size:11px;" title="Restaurar último estado guardado del SBC">📥</button>
                 </div>
 
-                <!-- Input para URL personalizada / editable y Analizar -->
+                <!-- Input para URL personalizada (opcional) -->
                 <div style="display:flex; align-items:center; gap:4px; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
-                    <input type="text" id="futbin-sbc-url-input" placeholder="O pega URL de FUTBIN..." style="width:170px; background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px;" />
-                    <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
-                        <option value="1">1 Sol.</option>
-                        <option value="3">3 Sol.</option>
-                        <option value="5" selected>5 Sol.</option>
-                        <option value="10">10 Sol.</option>
-                    </select>
-                    <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:4px 10px; font-size:11px; font-weight:700;" title="Descargar y analizar soluciones comunitarias">⚡ Analizar</button>
-                    <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:2px 7px; font-size:11px;" title="Restaurar último estado guardado del SBC">📥</button>
+                    <input type="text" id="futbin-sbc-url-input" placeholder="O pega URL de FUTBIN (opcional)..." style="width:190px; background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px;" title="Pega cualquier URL de desafío o plantilla de FUTBIN" />
                 </div>
 
                 <!-- Filtros requeridos por el usuario -->
@@ -4528,7 +4902,11 @@
                         urlInput.select();
                     }
                 } else if (val && urlInput) {
-                    urlInput.value = val;
+                    let clean = val;
+                    if (clean.includes('/72/Spooky') || clean.includes('/72/spooky')) {
+                        clean = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+                    }
+                    urlInput.value = clean;
                 }
             };
         }
@@ -4538,7 +4916,10 @@
             openWebBtn.onclick = () => {
                 const urlInput = document.getElementById('futbin-sbc-url-input');
                 const sel = document.getElementById('futbin-sbc-select');
-                const targetUrl = (urlInput && urlInput.value.trim()) || (sel && sel.value && sel.value !== 'custom' ? sel.value : 'https://www.futbin.com/27/squad-building-challenges/Challenges');
+                let targetUrl = (sel && sel.value && sel.value !== 'custom' ? sel.value : '') || (urlInput && urlInput.value.trim()) || (State.futbinSbcData && State.futbinSbcData.challengeUrl) || 'https://www.futbin.com/27/squad-building-challenges/Challenges';
+                if (targetUrl.includes('/72/Spooky') || targetUrl.includes('/72/spooky')) {
+                    targetUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+                }
                 window.open(targetUrl, '_blank');
             };
         }
@@ -4581,7 +4962,10 @@
                 const sel = document.getElementById('futbin-sbc-select');
                 const countSelect = document.getElementById('futbin-sbc-sol-count-select');
                 const count = countSelect ? parseInt(countSelect.value, 10) : 5;
-                const targetUrl = (urlInput && urlInput.value.trim()) || (sel && sel.value && sel.value !== 'custom' ? sel.value : '') || (State.futbinSbcData && State.futbinSbcData.challengeUrl) || '';
+                let targetUrl = (sel && sel.value && sel.value !== 'custom' ? sel.value : '') || (urlInput && urlInput.value.trim()) || (State.futbinSbcData && State.futbinSbcData.challengeUrl) || '';
+                if (targetUrl.includes('/72/Spooky') || targetUrl.includes('/72/spooky')) {
+                    targetUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+                }
                 if (targetUrl) {
                     fetchFutbinSbcDirectly(targetUrl, count);
                 } else {
@@ -4649,10 +5033,8 @@
             const gem = findAnyPlayerById(eaId);
 
             if (action === 'check-market') {
-                State.focusedGemId = eaId;
                 if (gem) checkMarketPrice(gem, false, false);
             } else if (action === 'search-market-open') {
-                State.focusedGemId = eaId;
                 if (gem) checkMarketPrice(gem, false, true);
             } else if (action === 'stop-market-crawl') {
                 State.abortMarketCrawl[eaId] = true;
@@ -5069,6 +5451,9 @@
             renderFutbinSbcTable();
             return;
         }
+
+        const scrollContainer = document.getElementById('futgg-body') || container;
+        const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
 
         if (State.gems.length === 0) {
             container.innerHTML = `
@@ -5487,14 +5872,9 @@
         html += `</tbody></table>`;
         container.innerHTML = html;
 
-        // Mantener foco visual y scroll hacia la carta activa si se reordenó la tabla
-        if (State.focusedGemId) {
-            const targetRow = container.querySelector(`tr[data-eaid="${State.focusedGemId}"]`);
-            if (targetRow) {
-                try {
-                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                } catch (e) { }
-            }
+        // Mantener la posición exacta de scroll para continuar con la siguiente carta sin saltos
+        if (scrollContainer) {
+            scrollContainer.scrollTop = savedScrollTop;
         }
     }
 
@@ -5504,6 +5884,9 @@
     function renderFutbinSbcTable() {
         const container = document.getElementById('futgg-table-container');
         if (!container) return;
+
+        const scrollContainer = document.getElementById('futgg-body') || container;
+        const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
 
         // Si no hay datos de FUTBIN SBC
         if (!State.futbinSbcData || !State.futbinSbcData.players || State.futbinSbcData.players.length === 0) {
@@ -5917,13 +6300,9 @@
         html += `</tbody></table>`;
         container.innerHTML = html;
 
-        if (State.focusedGemId) {
-            const targetRow = container.querySelector(`tr[data-eaid="${State.focusedGemId}"]`);
-            if (targetRow) {
-                try {
-                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                } catch (e) { }
-            }
+        // Mantener la posición exacta de scroll para continuar con la siguiente carta sin saltos
+        if (scrollContainer) {
+            scrollContainer.scrollTop = savedScrollTop;
         }
     }
 
