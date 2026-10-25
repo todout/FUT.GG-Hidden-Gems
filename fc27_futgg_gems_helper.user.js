@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.14.0
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: análisis directo de SBC desde el menú, corrección de URLs, navegación estable sin pérdida de foco/scroll y caché Paletools.
+// @version      1.15.0
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: detección y sincronización directa de SBCs desde Web App, corrección completa de URLs de Marquesinas/FUTBIN, análisis de soluciones y navegación estable.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1513,9 +1513,16 @@
         // Spooky Nights
         { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights" },
 
-        // Partidos de Marquesina (Marquee Matchups)
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: Desafío 1", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/59" },
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: Desafío 2", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/60" },
+        // Partidos de Marquesina (Marquee Matchups - 4 desafíos semanales)
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: PSG v Olympique Lyonnais", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/96/psg-v-olympique-lyonnais" },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: SSC Napoli v AS Roma", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/97/ssc-napoli-v-as-roma" },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: Desafío 3", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/98" },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina: Desafío 4", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/99" },
+
+        // Intro to Upgrade SBCs (Fundaciones / Mejoras fijas - otorgan sobres)
+        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Room to Grow", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/13/room-to-grow" },
+        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Build Up Play", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/14/build-up-play" },
+        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Raw Power", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/15/raw-power" },
 
         // Híbrido de Ligas (Hybrid Leagues - 4 desafíos individuales)
         { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Give Me Five", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/1/give-me-five" },
@@ -1544,8 +1551,13 @@
                 // Filtrar entradas huérfanas o con URLs obsoletas/erróneas
                 merged = saved.filter(m => m && m.url &&
                     !m.url.includes('/squad-building-challenge/ea/') &&
+                    !m.url.includes('/squad-building-challenge/') && // URLs viejas en singular
                     !m.url.includes('/72/Spooky') &&
                     !m.url.includes('/72/spooky') &&
+                    !m.url.includes('/Challenges/59') &&
+                    !m.url.includes('/Challenges/60') &&
+                    !m.url.endsWith('/59') &&
+                    !m.url.endsWith('/60') &&
                     !m.url.endsWith('/squad-building-challenges/Challenges') &&
                     !m.url.endsWith('/squad-building-challenges/Challenges/') &&
                     !m.url.endsWith('/squad-building-challenges')
@@ -1656,12 +1668,112 @@
         }
     }
 
+    // Detección automática del SBC que el usuario está viendo actualmente en la pantalla de la Web App
+    function detectWebappCurrentSbc() {
+        let detected = { name: '', id: null, setName: '' };
+
+        try {
+            // 1. Intentar inspeccionar los controladores de vista nativos de EA FC
+            if (typeof getAppMain === 'function') {
+                const root = getAppMain()?.getRootViewController();
+                const presented = root?.getPresentedViewController();
+                const current = presented?.getCurrentViewController();
+                if (current) {
+                    if (current._challenge && current._challenge.name) {
+                        detected.name = current._challenge.name;
+                        detected.id = current._challenge.id;
+                        if (current._set && current._set.name) detected.setName = current._set.name;
+                    } else if (current._set && current._set.name) {
+                        detected.name = current._set.name;
+                        detected.setName = current._set.name;
+                        detected.id = current._set.id;
+                    }
+                }
+            }
+        } catch (e) { }
+
+        // 2. Si no, inspeccionar el encabezado de navegación de la Web App
+        if (!detected.name) {
+            const titleEl = document.querySelector('.ut-navigation-bar-view .title');
+            if (titleEl && titleEl.textContent) {
+                detected.name = titleEl.textContent.trim();
+            }
+        }
+
+        // 3. Si no, inspeccionar filas o tarjetas seleccionadas de desafíos
+        if (!detected.name) {
+            const rowTitle = document.querySelector('.ut-sbc-challenge-table-row-view.selected .title, .ut-sbc-challenge-details-view .title, .ut-sbc-set-tile-view.selected .tileTitle');
+            if (rowTitle && rowTitle.textContent) {
+                detected.name = rowTitle.textContent.trim();
+            }
+        }
+
+        return (detected.name && detected.name.length >= 2) ? detected : null;
+    }
+
+    // Consulta de los SBCs activos en la Web App que otorgan sobres (packs)
+    async function getWebappActiveChallenges() {
+        const results = [];
+        try {
+            if (typeof services === 'undefined' || !services.SBC) return results;
+            let sets = [];
+            if (services.SBC.repository && typeof services.SBC.repository.getSets === 'function') {
+                const raw = services.SBC.repository.getSets();
+                if (raw) sets = Array.isArray(raw) ? raw : (raw.values ? Array.from(raw.values()) : Object.values(raw));
+            }
+            if (sets.length === 0 && typeof services.SBC.requestSets === 'function') {
+                const res = await new Promise((resolve) => {
+                    const obs = services.SBC.requestSets();
+                    if (!obs || typeof obs.observe !== 'function') return resolve(null);
+                    obs.observe(this, (sender, response) => {
+                        try { sender.unobserve(this); } catch (e) { }
+                        resolve(response);
+                    });
+                });
+                if (res && res.success && res.data && Array.isArray(res.data.sets)) {
+                    sets = res.data.sets;
+                }
+            }
+
+            for (const s of sets) {
+                const sName = s.name || s.title || '';
+                const chs = (typeof s.getChallenges === 'function' ? s.getChallenges() : s.challenges) || [];
+                for (const ch of chs) {
+                    const chName = ch.name || ch.title || '';
+                    if (!chName) continue;
+                    // Verificar si el desafío da sobres (awards con "pack" o "sobre")
+                    let hasPackReward = false;
+                    const awards = (ch.awards && Array.isArray(ch.awards) ? ch.awards : [])
+                        .concat(s.awards && Array.isArray(s.awards) ? s.awards : []);
+                    for (const a of awards) {
+                        const valStr = JSON.stringify(a).toLowerCase();
+                        if (valStr.includes('pack') || valStr.includes('sobre') || valStr.includes('players')) {
+                            hasPackReward = true;
+                            break;
+                        }
+                    }
+                    results.push({
+                        setName: sName,
+                        challengeName: chName,
+                        hasPackReward: hasPackReward,
+                        isCompleted: typeof ch.isCompleted === 'function' ? ch.isCompleted() : false
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("[FC 27 Helper] Error leyendo sets de Web App:", e);
+        }
+        return results;
+    }
+
     async function fetchFutbinChallengesCatalogRemote() {
         return new Promise((resolve) => {
-            if (typeof GM_xmlhttpRequest !== 'function') return resolve(getFutbinSbcCatalog());
+            const catalog = getFutbinSbcCatalog();
+            if (typeof GM_xmlhttpRequest !== 'function') return resolve(catalog);
+
             GM_xmlhttpRequest({
                 method: 'GET',
-                url: 'https://www.futbin.com/27/squad-building-challenges/Challenges',
+                url: 'https://www.futbin.com/27/squad-building-challenges',
                 headers: {
                     'User-Agent': navigator.userAgent,
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
@@ -1671,8 +1783,7 @@
                         try {
                             const parser = new DOMParser();
                             const doc = parser.parseFromString(res.responseText, 'text/html');
-                            const anchors = Array.from(doc.querySelectorAll('a[href*="/squad-building-challenge/"], a[href*="/squad-building-challenges/"]'));
-                            const catalog = getFutbinSbcCatalog();
+                            const anchors = Array.from(doc.querySelectorAll('a[href*="/squad-building-challenges/"], a[href*="/squad-building-challenge/"]'));
                             let added = 0;
                             const groupUrlsToInspect = [];
 
@@ -1683,37 +1794,36 @@
                                 const cleanUrl = fullUrl.split('?')[0].split('#')[0];
                                 const pathLower = cleanUrl.toLowerCase();
 
-                                // Ignorar el hub genérico principal
-                                if (pathLower.endsWith('/squad-building-challenges/challenges') || pathLower.endsWith('/squad-building-challenges')) continue;
+                                if (pathLower.endsWith('/squad-building-challenges') || pathLower.endsWith('/squad-building-challenges/')) continue;
 
                                 const nameEl = a.querySelector('.challenge-name, .sbc-name, h4, h5, span') || a;
                                 let name = (nameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
 
-                                // Si es un desafío individual (con /ea/ o /Challenges/\d+/)
-                                if (pathLower.includes('/ea/') || /\/challenges\/\d+\/[^/]+/i.test(pathLower)) {
+                                // Desafío individual con ID numérico en /Challenges/<id>
+                                if (/\/challenges\/\d+/i.test(pathLower)) {
                                     if (name && name.length >= 2 && !catalog.some(c => c.url.toLowerCase() === cleanUrl.toLowerCase())) {
-                                        catalog.push({ group: "📚 Desafíos Activos", title: name, url: cleanUrl });
+                                        catalog.push({ group: "📚 Desafíos Activos (FUTBIN)", title: name, url: cleanUrl });
                                         added++;
                                     }
-                                } else if (/\/squad-building-challenge\/\d+$/i.test(pathLower) || /\/squad-building-challenges\/\d+$/i.test(pathLower)) {
-                                    // Es una página de grupo (ej: Marquee Matchups /59 o League & Nation /10)
+                                } else if (pathLower.includes('/challenges/') || pathLower.includes('/marquee') || pathLower.includes('/foundations')) {
+                                    // Página de grupo (Marquee Matchups, etc.)
                                     if (!groupUrlsToInspect.includes(cleanUrl)) {
                                         groupUrlsToInspect.push(cleanUrl);
                                     }
                                 }
                             }
 
-                            // Si se encontraron grupos, inspeccionar los 2 primeros grupos para extraer sus sub-desafíos
-                            for (const gUrl of groupUrlsToInspect.slice(0, 3)) {
+                            // Inspeccionar las páginas de grupo encontradas (ej: Marquee Matchups)
+                            for (const gUrl of groupUrlsToInspect.slice(0, 4)) {
                                 try {
                                     await new Promise(r => {
                                         GM_xmlhttpRequest({
                                             method: 'GET',
                                             url: gUrl,
-                                            onload: function(gRes) {
+                                            onload: function (gRes) {
                                                 if (gRes.status === 200 && gRes.responseText) {
                                                     const gDoc = parser.parseFromString(gRes.responseText, 'text/html');
-                                                    const gAnchors = Array.from(gDoc.querySelectorAll('a[href*="/squad-building-challenge/ea/"], a[href*="/squad-building-challenges/Challenges/"]'));
+                                                    const gAnchors = Array.from(gDoc.querySelectorAll('a[href*="/squad-building-challenges/Challenges/"], a[href*="/Challenges/"]'));
                                                     const gTitleEl = gDoc.querySelector('h1, .challenge-name, .sbc-header-title');
                                                     const gTitle = gTitleEl ? gTitleEl.textContent.replace(/sbc/i, '').trim() : 'SBC Grupo';
 
@@ -1741,6 +1851,29 @@
                                     });
                                 } catch (eGrp) { }
                             }
+
+                            // Sincronizar también con desafíos detectados en la Web App que otorgan sobres
+                            try {
+                                const webAppChallenges = await getWebappActiveChallenges();
+                                for (const wch of webAppChallenges) {
+                                    // Si no está ya en el catálogo, agregarlo con su slug tentativo
+                                    const wSlug = wch.challengeName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                                    const exists = catalog.some(c => {
+                                        const cNorm = c.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+                                        const wNorm = wch.challengeName.toLowerCase().replace(/[^a-z0-9]/g, '');
+                                        return cNorm.includes(wNorm) || wNorm.includes(cNorm);
+                                    });
+                                    if (!exists) {
+                                        const tag = wch.hasPackReward ? '🎁 [Sobre] ' : '';
+                                        catalog.push({
+                                            group: `🎮 Web App: ${wch.setName}`,
+                                            title: `${tag}${wch.setName}: ${wch.challengeName}`,
+                                            url: `https://www.futbin.com/27/squad-building-challenges/Challenges/${wSlug}`
+                                        });
+                                        added++;
+                                    }
+                                }
+                            } catch (eWeb) { }
 
                             if (catalog.length > 0) {
                                 GM_setValue('futbin_sbc_catalog', catalog);
@@ -3628,7 +3761,13 @@
         // Sanitizar URLs con IDs o slugs desactualizados
         if (cleanUrl.includes('/72/Spooky') || cleanUrl.includes('/72/spooky')) {
             cleanUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+        } else if (cleanUrl.includes('/59')) {
+            cleanUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/96/psg-v-olympique-lyonnais';
+        } else if (cleanUrl.includes('/60')) {
+            cleanUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/97/ssc-napoli-v-as-roma';
         }
+        cleanUrl = cleanUrl.replace('/squad-building-challenge/', '/squad-building-challenges/');
+
 
         notificar(`⚡ Analizando soluciones de FUTBIN (${solutionCount} sol.)...`, "#00ccff");
         State.isBatchRunning = true;
@@ -4774,6 +4913,7 @@
                     <select id="futbin-sbc-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px; min-width:180px; max-width:240px; cursor:pointer;" title="Selecciona un desafío de FUTBIN">
                         <!-- Rellenado dinámicamente -->
                     </select>
+                    <button class="futgg-btn" id="futbin-sbc-detect-btn" style="padding:4px 8px; font-size:11px; color:#00ccff; border-color:#00ccff; font-weight:700;" title="Detectar automáticamente el SBC que tienes abierto en pantalla en la Web App">🎯 Detectar</button>
                     <span style="font-size:10px; font-weight:700; color:#8fa0b5;">Soluciones:</span>
                     <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
                         <option value="1">Top 1</option>
@@ -4783,7 +4923,7 @@
                     </select>
                     <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:4px 12px; font-size:11px; font-weight:700; white-space:nowrap;" title="Descargar y analizar soluciones comunitarias directamente desde este menú">⚡ Analizar SBC</button>
                     <button class="futgg-btn" id="futbin-sbc-open-web-btn" style="padding:4px 8px; font-size:11px;" title="Abrir página del desafío en FUTBIN en una nueva pestaña">🌐 Abrir Web</button>
-                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:4px 8px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN">🔄</button>
+                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:4px 8px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN y Web App">🔄</button>
                     <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:4px 8px; font-size:11px;" title="Restaurar último estado guardado del SBC">📥</button>
                 </div>
 
@@ -4905,8 +5045,68 @@
                     let clean = val;
                     if (clean.includes('/72/Spooky') || clean.includes('/72/spooky')) {
                         clean = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+                    } else if (clean.includes('/59')) {
+                        clean = 'https://www.futbin.com/27/squad-building-challenges/Challenges/96/psg-v-olympique-lyonnais';
+                    } else if (clean.includes('/60')) {
+                        clean = 'https://www.futbin.com/27/squad-building-challenges/Challenges/97/ssc-napoli-v-as-roma';
                     }
+                    clean = clean.replace('/squad-building-challenge/', '/squad-building-challenges/');
                     urlInput.value = clean;
+                }
+            };
+        }
+
+        const detectBtn = document.getElementById('futbin-sbc-detect-btn');
+        if (detectBtn) {
+            detectBtn.onclick = () => {
+                const detected = detectWebappCurrentSbc();
+                if (!detected || !detected.name) {
+                    notificar("⚠️ No se detectó ningún SBC en la pantalla de la Web App. Abre un SBC y vuelve a presionar 🎯 Detectar.", "#ffaa00");
+                    return;
+                }
+
+                const dName = detected.name;
+                const catalog = getFutbinSbcCatalog();
+                const norm = dName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                // 1. Buscar en el catálogo por título normalizado
+                let match = catalog.find(c => {
+                    const cNorm = (c.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return cNorm.includes(norm) || norm.includes(cNorm);
+                });
+
+                // 2. Buscar por palabras clave relevantes
+                if (!match) {
+                    const words = dName.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['desafio', 'challenge', 'partido', 'match', 'para'].includes(w));
+                    if (words.length > 0) {
+                        match = catalog.find(c => {
+                            const cLower = (c.title || '').toLowerCase();
+                            return words.some(w => cLower.includes(w));
+                        });
+                    }
+                }
+
+                const sel = document.getElementById('futbin-sbc-select');
+                const urlInput = document.getElementById('futbin-sbc-url-input');
+
+                if (match) {
+                    if (sel) sel.value = match.url;
+                    if (urlInput) urlInput.value = match.url;
+                    notificar(`🎯 SBC detectado: ${match.title}`, "#00ff88");
+                } else {
+                    const slug = dName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                    const tentativeUrl = `https://www.futbin.com/27/squad-building-challenges/Challenges/${slug}`;
+                    const newEntry = {
+                        group: "🎯 Detectados de Web App",
+                        title: `🎯 ${detected.setName ? detected.setName + ': ' : ''}${dName}`,
+                        url: tentativeUrl
+                    };
+                    catalog.unshift(newEntry);
+                    GM_setValue('futbin_sbc_catalog', catalog);
+                    renderFutbinSbcSelectOptions();
+                    if (sel) sel.value = tentativeUrl;
+                    if (urlInput) urlInput.value = tentativeUrl;
+                    notificar(`🎯 Detectado: "${dName}". Listo para analizar o abrir en web.`, "#00ff88");
                 }
             };
         }
@@ -4916,10 +5116,15 @@
             openWebBtn.onclick = () => {
                 const urlInput = document.getElementById('futbin-sbc-url-input');
                 const sel = document.getElementById('futbin-sbc-select');
-                let targetUrl = (sel && sel.value && sel.value !== 'custom' ? sel.value : '') || (urlInput && urlInput.value.trim()) || (State.futbinSbcData && State.futbinSbcData.challengeUrl) || 'https://www.futbin.com/27/squad-building-challenges/Challenges';
+                let targetUrl = (sel && sel.value && sel.value !== 'custom' ? sel.value : '') || (urlInput && urlInput.value.trim()) || (State.futbinSbcData && State.futbinSbcData.challengeUrl) || 'https://www.futbin.com/27/squad-building-challenges';
                 if (targetUrl.includes('/72/Spooky') || targetUrl.includes('/72/spooky')) {
                     targetUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights';
+                } else if (targetUrl.includes('/59')) {
+                    targetUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/96/psg-v-olympique-lyonnais';
+                } else if (targetUrl.includes('/60')) {
+                    targetUrl = 'https://www.futbin.com/27/squad-building-challenges/Challenges/97/ssc-napoli-v-as-roma';
                 }
+                targetUrl = targetUrl.replace('/squad-building-challenge/', '/squad-building-challenges/');
                 window.open(targetUrl, '_blank');
             };
         }
@@ -4927,7 +5132,7 @@
         const refreshCatalogBtn = document.getElementById('futbin-sbc-refresh-catalog-btn');
         if (refreshCatalogBtn) {
             refreshCatalogBtn.onclick = async () => {
-                notificar("🔄 Consultando desafíos activos en FUTBIN...", "#00ccff");
+                notificar("🔄 Consultando desafíos activos en FUTBIN y Web App...", "#00ccff");
                 const list = await fetchFutbinChallengesCatalogRemote();
                 renderFutbinSbcSelectOptions();
                 if (list && list.length > 0) {
