@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.10.5
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: precios de FUT.GG, rangos máximos seguros para bronces (5k/10k al 90%), verificación inteligente con rotación anti-caché y UI optimizada.
+// @version      1.10.6
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: extracción precisa de EA Asset IDs, detección garantizada de cartas en club, listado seguro al 90% para cartas extintas y UI optimizada.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -527,30 +527,75 @@
 
                 // 1. Si el DOM está renderizado (document activo), extraer de elementos HTML
                 if (doc) {
-                    const cardContainers = Array.from(doc.querySelectorAll('.player-draggable, .playercard-field, .squad-player, a[href*="/27/player/"], a[href*="/player/"]'));
-                    for (const rawEl of cardContainers) {
-                        const el = rawEl.closest('.player-draggable, .playercard-field, .squad-player') || rawEl;
-                        const img = el.querySelector('img[src*="/players/"]') || (rawEl.tagName === 'IMG' && rawEl.src.includes('/players/') ? rawEl : null);
-                        let eaId = null;
-                        if (img && img.src) {
-                            const match = img.src.match(/\/players\/(\d+)\.png/i);
-                            if (match) eaId = Number(match[1]);
+                    const cardContainers = Array.from(doc.querySelectorAll('#cardlid1, #cardlid2, #cardlid3, #cardlid4, #cardlid5, #cardlid6, #cardlid7, #cardlid8, #cardlid9, #cardlid10, #cardlid11, .player-draggable, .playercard-field, .squad-player'));
+                    const allCandidates = cardContainers.length > 0 ? cardContainers : Array.from(doc.querySelectorAll('a[href*="/27/player/"], a[href*="/player/"]'));
+
+                    for (const rawEl of allCandidates) {
+                        const el = rawEl.closest('.player-draggable, .playercard-field, .squad-player, [id^="cardlid"]') || rawEl;
+
+                        // Extraer nombre
+                        const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
+                        let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
+                        if (name.includes('Coin') || name === 'Add Player') continue;
+
+                        // Extraer FUTBIN ID del enlace
+                        let futbinId = null;
+                        const link = el.querySelector('a[href*="/player/"]') || rawEl.closest('a[href*="/player/"]') || (rawEl.tagName === 'A' && rawEl.href.includes('/player/') ? rawEl : null);
+                        if (link && link.href) {
+                            const mLink = link.href.match(/\/player\/(\d+)/i);
+                            if (mLink) futbinId = Number(mLink[1]);
                         }
 
-                        if (!eaId) {
-                            const link = el.querySelector('a[href*="/player/"]') || rawEl.closest('a[href*="/player/"]');
-                            if (link && link.href) {
-                                const mLink = link.href.match(/\/player\/(\d+)/i);
-                                if (mLink) eaId = Number(mLink[1]);
+                        // Extraer EA Asset ID buscando en TODOS los elementos de imagen (src, data-src, srcset)
+                        let eaId = null;
+                        const allImgs = Array.from(el.querySelectorAll('img, .playercard-27-base-img, [style*="/players/"]'));
+                        if (rawEl.tagName === 'IMG') allImgs.push(rawEl);
+
+                        for (const im of allImgs) {
+                            const attrs = [
+                                im.getAttribute('src'),
+                                im.getAttribute('data-src'),
+                                im.getAttribute('srcset'),
+                                im.getAttribute('data-srcset'),
+                                im.getAttribute('data-original'),
+                                im.src,
+                                im.style ? im.style.backgroundImage : null
+                            ];
+                            for (const attr of attrs) {
+                                if (attr) {
+                                    const m = attr.match(/\/players\/(\d+)\.png/i);
+                                    if (m) {
+                                        eaId = Number(m[1]);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (eaId) break;
+                        }
+
+                        // Si no se encontró en imágenes del DOM, buscar en el texto HTML circundante por futbinId o name
+                        if (!eaId && htmlText) {
+                            let searchPos = -1;
+                            if (futbinId) searchPos = htmlText.indexOf(String(futbinId));
+                            if (searchPos === -1 && name) searchPos = htmlText.indexOf(`"playerName":"${name}"`);
+                            if (searchPos !== -1) {
+                                const snippet = htmlText.substring(Math.max(0, searchPos - 1200), Math.min(htmlText.length, searchPos + 2200));
+                                const mEa = snippet.match(/\/players\/(\d+)\.png/i);
+                                if (mEa) eaId = Number(mEa[1]);
                             }
                         }
 
-                        if (!eaId || seenInThisSquad.has(eaId)) continue;
-                        seenInThisSquad.add(eaId);
+                        // Si aún no tenemos eaId pero tenemos futbinId:
+                        // Solo usar futbinId como eaId si es >= 50000 (en EA FC los IDs de jugadores son típicamente > 50000)
+                        if (!eaId && futbinId && futbinId >= 50000) {
+                            eaId = futbinId;
+                        }
 
-                        const nameEl = el.querySelector('.playercard-27-name, .card-name, .pcdisplay-name') || el;
-                        let name = (nameEl.textContent || '').trim().split('\n')[0].trim();
+                        const uniqueKey = eaId || futbinId || name;
+                        if (!uniqueKey || seenInThisSquad.has(uniqueKey)) continue;
+                        seenInThisSquad.add(uniqueKey);
 
+                        // Rating
                         const ratingEl = el.querySelector('.playercard-27-rating, .card-rating, .pcdisplay-rat');
                         let rating = 0;
                         if (ratingEl) {
@@ -558,9 +603,11 @@
                             if (rMatch) rating = parseInt(rMatch[0], 10);
                         }
 
+                        // Posición
                         const posEl = el.querySelector('.playercard-27-position, .card-position, .pcdisplay-pos');
                         const position = posEl ? posEl.textContent.trim().toUpperCase() : '';
 
+                        // Precio de FUTBIN
                         const priceEl = el.querySelector('.price-segment, .player-price, .platform-price-wrapper-small, .price') || rawEl.querySelector('.price-segment, .player-price, .price');
                         let futbinPrice = 0;
                         if (priceEl) {
@@ -575,9 +622,8 @@
                         }
 
                         // Si no se encontró precio en el DOM pero tenemos htmlText, buscar en el fragmento JSON
-                        if (futbinPrice === 0 && htmlText) {
-                            const eaStr = String(eaId);
-                            const pos = htmlText.indexOf(eaStr);
+                        if (futbinPrice === 0 && htmlText && eaId) {
+                            const pos = htmlText.indexOf(String(eaId));
                             if (pos !== -1) {
                                 const snippet = htmlText.substring(Math.max(0, pos - 500), Math.min(htmlText.length, pos + 1000));
                                 const pMatch = snippet.match(/"(?:psPrice|price|pcPrice|bin)":\s*"?(\d+)"?/i) || snippet.match(/data-price="?(\d+)"?/i);
@@ -593,47 +639,65 @@
                         }
 
                         players.push({
-                            eaId: eaId,
-                            name: name || `Jugador #${eaId}`,
+                            eaId: eaId || futbinId,
+                            realEaId: eaId,
+                            futbinId: futbinId,
+                            name: name || `Jugador #${eaId || futbinId}`,
                             rating: rating,
                             position: position,
                             quality: quality,
                             futbinPrice: futbinPrice,
+                            estimatedPrice: futbinPrice || (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700)),
                             squadIndex: squadIndex
                         });
                     }
                 }
 
-                // 2. Si el DOM no tenía elementos renderizados (HTML estático de fetch), extraer de datos JSON embebidos
+                // 2. Si el DOM no tenía elementos renderizados (HTML estático de fetch), extraer del JSON embebido
                 if (players.length === 0 && htmlText) {
-                    const regex = /"position":\{"value":"([^"]+)"\},"playerName":"([^"]+)"[\s\S]*?\/players\/(\d+)\.png[\s\S]*?"rating":\s*"?(\d+)"?/g;
+                    const regex = /"position":\{"value":"([^"]+)"\},"playerName":"([^"]+)"[\s\S]*?\/players\/(\d+)\.png/g;
                     let m;
                     while ((m = regex.exec(htmlText)) !== null) {
                         const pos = m[1];
                         const name = m[2];
                         const eaId = Number(m[3]);
-                        const rating = parseInt(m[4], 10) || 0;
 
                         if (!eaId || seenInThisSquad.has(eaId)) continue;
                         seenInThisSquad.add(eaId);
 
-                        // Buscar precio aproximado en la ventana JSON subsiguiente
+                        // Ventana local para extraer rating y precio sin expresiones codiciosas
+                        const snippet = htmlText.substring(Math.max(0, m.index - 400), Math.min(htmlText.length, m.index + 2200));
+
+                        let rating = 0;
+                        const rMatch = snippet.match(/"(?:rating|overall)":\s*"?(\d+)"?/i) || snippet.match(/"statsCard":\{"rating":\s*"?(\d+)"?/i);
+                        if (rMatch) {
+                            rating = parseInt(rMatch[1], 10) || 0;
+                        }
+
                         let futbinPrice = 0;
-                        const snippet = htmlText.substring(m.index, m.index + 8000);
                         const priceMatch = snippet.match(/"(?:psPrice|price|pcPrice|bin)":\s*"?(\d+)"?/i) || snippet.match(/data-price="?(\d+)"?/i);
                         if (priceMatch) {
                             futbinPrice = parseInt(priceMatch[1], 10) || 0;
+                        }
+
+                        let futbinId = null;
+                        const fMatch = snippet.match(/"playerCardId":\{"value":(\d+)\}/) || snippet.match(/\/player\/(\d+)\//);
+                        if (fMatch) {
+                            futbinId = Number(fMatch[1]);
                         }
 
                         const quality = (rating > 0 && rating <= 64) ? 'bronze' : ((rating > 0 && rating <= 74) ? 'silver' : 'gold');
 
                         players.push({
                             eaId: eaId,
+                            realEaId: eaId,
+                            futbinId: futbinId,
                             name: name || `Jugador #${eaId}`,
                             rating: rating,
                             position: pos,
                             quality: quality,
                             futbinPrice: futbinPrice,
+                            estimatedPrice: futbinPrice || (quality === 'bronze' ? 200 : (quality === 'silver' ? 350 : 700)),
                             squadIndex: squadIndex
                         });
                     }
@@ -737,7 +801,7 @@
                                     position: p.position,
                                     quality: p.quality,
                                     futbinPrice: p.futbinPrice,
-                                    estimatedPrice: p.futbinPrice || (p.quality === 'bronze' ? 1500 : (p.quality === 'silver' ? 2200 : 3500)),
+                                    estimatedPrice: p.futbinPrice || (p.quality === 'bronze' ? 200 : (p.quality === 'silver' ? 350 : 700)),
                                     frequency: 1,
                                     solutions: [i + 1],
                                     squadUrl: url
@@ -1218,6 +1282,7 @@
         futbinSolutionsCount: 5, // Cantidad de soluciones analizadas por defecto (5)
         gems: [],              // Lista de cartas de FUT.GG
         clubMatches: {},       // eaId -> ItemData del club
+        clubScanned: {},       // eaId -> boolean (si la carta ya fue buscada en el club en esta sesión)
         transferMatches: {},   // eaId -> ItemData de la lista de transferibles (sin listar)
         sellingMatches: {},    // eaId -> { item, auction, expires, expiresAt, buyNow } (vendiéndose activas)
         soldMatches: {},       // eaId -> ItemData (ya vendidas)
@@ -1365,14 +1430,9 @@
             if (resId === numEaId || defId === numEaId || maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId) {
                 return true;
             }
-            // Si el objeto tiene un ID propio claro y es diferente al buscado, descartar inmediatamente (previene cartas ajenas del caché)
-            const primaryId = defId || resId || maskedId || staticId;
-            if (primaryId > 0 && primaryId !== numEaId) {
-                return false;
-            }
         }
 
-        // 2. Coincidencia por nombre (solo como fallback si no hay IDs discordantes)
+        // 2. Coincidencia por nombre (fallback seguro para jugadores con IDs de variación o desfasados)
         if (name && it._staticData) {
             const names = [
                 it._staticData.name,
@@ -1488,12 +1548,15 @@
     async function searchSingleCardInClub(gem) {
         notificar(`🔍 Buscando a ${gem.name} en tu club...`, "#00ccff");
         const item = await findCardInAccount(gem);
+        const eaId = Number(gem.eaId);
+        State.clubScanned[eaId] = true;
         if (item) {
             notificar(`🟢 ¡Encontrado ${gem.name} en tu cuenta!`, "#00ff88");
         } else {
             notificar(`⚪ ${gem.name} no se encontró en el club ni en transferibles`, "#ffaa00");
         }
-        renderGemsTable();
+        updateFutbinTabBadge();
+        renderCurrentTable();
     }
 
     async function scanClubForGems(isSilent = false) {
@@ -2154,7 +2217,15 @@
         const startBid = calculateStartBid(validBuyNow);
 
         try {
-            // En EA FC Web App, services.Item.list lista directamente desde Club o Transferibles sin necesidad de mover
+            // Si el item está en el club, primero moverlo a transferibles para que EA acepte el listado sin errores
+            const transferPile = (win.ItemPile && win.ItemPile.TRANSFER) || 2;
+            if (item.pile !== transferPile) {
+                const moved = await moveToTransferList(gem, true);
+                if (moved && State.transferMatches[eaId]) {
+                    item = State.transferMatches[eaId];
+                }
+            }
+
             await callEAService(services.Item.list(item, startBid, validBuyNow, 3600));
             dismissEaDialogIfPresent();
 
@@ -2487,28 +2558,59 @@
 
                 updateBatchStatus(`Club (${index}/${missing.length}): Comprobando ${name}...`);
 
-                // Consulta segura ÚNICA y directa a services.Club.search por defId
+                // Consulta segura a services.Club.search por defId
                 if (win.services && win.services.Club && typeof win.services.Club.search === 'function') {
                     try {
                         const criteria = createSearchCriteria(eaId);
                         criteria.count = 15;
                         criteria.offset = 0;
                         criteria.type = 'player';
-                        criteria.maskedDefId = eaId;
-                        criteria.defId = [eaId];
+                        if (eaId > 0) {
+                            criteria.maskedDefId = eaId;
+                            criteria.defId = [eaId];
+                        }
 
-                        const res = await callEAService(win.services.Club.search(criteria));
-                        const items = extractItemsFromEaResponse(res);
-                        const match = items && items.find(it => matchesCard(it, eaId, name));
+                        let res = await callEAService(win.services.Club.search(criteria));
+                        let items = extractItemsFromEaResponse(res);
+                        let match = items && items.find(it => matchesCard(it, eaId, name));
+
+                        // Si la búsqueda por defId falló y tenemos calidad, hacer búsqueda amplia en club por nivel
+                        if (!match && p.quality) {
+                            const broadCriteria = createSearchCriteria();
+                            broadCriteria.count = 35;
+                            broadCriteria.offset = 0;
+                            broadCriteria.type = 'player';
+                            broadCriteria.level = p.quality;
+                            const broadRes = await callEAService(win.services.Club.search(broadCriteria));
+                            const broadItems = extractItemsFromEaResponse(broadRes);
+                            match = broadItems && broadItems.find(it => matchesCard(it, eaId, name));
+                            if (match) {
+                                const realDefId = Number(match.definitionId || match.resourceId || match.assetId);
+                                if (realDefId > 0 && realDefId !== eaId) {
+                                    console.log(`[FUTBIN SBC] 🔄 Corrigiendo ID de ${name}: de ${eaId} a defId EA real ${realDefId}`);
+                                    p.eaId = realDefId;
+                                }
+                            }
+                        }
+
                         if (match) {
                             match._isTradeable = isItemTradeable(match);
-                            State.clubMatches[eaId] = match;
+                            const finalEaId = Number(p.eaId);
+                            State.clubMatches[finalEaId] = match;
                             found++;
-                            console.log(`[FUTBIN SBC] 🟢 Encontrado en club: ${name}`, match);
+                            console.log(`[FUTBIN SBC] 🟢 Encontrado en club: ${name} (ID: ${finalEaId})`, match);
                         }
                     } catch (err) {
                         console.warn(`[FUTBIN SBC] Error al consultar ${name} en club:`, err);
                     }
+                }
+
+                State.clubScanned[eaId] = true;
+                State.clubScanned[Number(p.eaId)] = true;
+
+                if (index % 3 === 0 || found > 0) {
+                    updateFutbinTabBadge();
+                    renderFutbinSbcTable();
                 }
 
                 // Delay seguro entre consultas individuales para no saturar EA
@@ -2552,6 +2654,9 @@
                 break;
             }
             if (!State.isBatchRunning || State.forceCancelAllOperations) break;
+
+            // Delay seguro y cancelable entre cartas para no saturar mercado
+            await randomDelay(CONFIG.minMarketDelay, CONFIG.maxMarketDelay, () => !State.isBatchRunning || State.forceCancelAllOperations);
         }
 
         State.isBatchRunning = false;
@@ -3051,13 +3156,13 @@
             .futgg-tag.extinct { background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid #ff5555; }
 
             .futgg-price-input {
-                width: 58px;
-                min-width: 52px;
+                width: 76px;
+                min-width: 70px;
                 box-sizing: border-box;
                 background: #131c28;
                 border: 1px solid #35475e;
                 color: #fff;
-                padding: 3px 4px;
+                padding: 3px 6px;
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 700;
@@ -4923,6 +5028,26 @@
             gemsCountEl.textContent = `SBC: ${displayedPlayers.length} cartas mostradas (de ${sbc.players.length} en ${sbc.solutionCount || 5} soluciones)`;
         }
 
+        const unverifiedCount = sbc.players.filter(p => {
+            const id = Number(p.eaId);
+            return !State.clubMatches[id] && !State.transferMatches[id] && !State.sellingMatches[id] && !State.soldMatches[id] && !State.clubScanned[id];
+        }).length;
+
+        let bannerHtml = '';
+        if (unverifiedCount > 0) {
+            bannerHtml = `
+                <div style="background: rgba(0, 204, 255, 0.08); border: 1px solid rgba(0, 204, 255, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px;">
+                    <div style="display: flex; align-items: center; gap: 8px; color: #cbd5e1;">
+                        <span style="font-size: 18px;">💡</span>
+                        <span>Hay <b>${unverifiedCount} cartas</b> de este SBC pendientes de comprobar en tu Club.</span>
+                    </div>
+                    <button class="futgg-btn primary" id="futbin-banner-scan-btn" style="padding: 5px 12px; font-size: 11px; white-space: nowrap;">
+                        🔍 Buscar en Mi Club
+                    </button>
+                </div>
+            `;
+        }
+
         let html = `
             <table class="futgg-table">
                 <thead>
@@ -4930,9 +5055,9 @@
                         <th style="width:19%; min-width:140px;">Jugador SBC</th>
                         <th style="width:13%; min-width:105px;">En Mi Club</th>
                         <th style="width:12%; min-width:90px;">Frecuencia SBC</th>
-                        <th style="width:11%; min-width:85px;">Est. FUT.GG</th>
-                        <th style="width:23%; min-width:160px;">Mercado Real (EA)</th>
-                        <th style="width:14%; min-width:115px;">Listar Por</th>
+                        <th style="width:11%; min-width:85px;">Ref. FUTBIN / GG</th>
+                        <th style="width:22%; min-width:160px;">Mercado Real (EA)</th>
+                        <th style="width:15%; min-width:130px;">Listar Por</th>
                         <th style="width:8%; min-width:75px; text-align:center;">Acción</th>
                     </tr>
                 </thead>
@@ -4965,8 +5090,10 @@
                 clubStatusHtml = `<span class="futgg-tag none" title="En el Club pero Intransferible">🔒 Intransferible</span>`;
             } else if (sold) {
                 clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;">✅ Ya Vendido</span>`;
+            } else if (State.clubScanned[eaId]) {
+                clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;" title="Búsqueda realizada: no se encontró en tu club">✕ Fuera de Club</span>`;
             } else {
-                clubStatusHtml = `<span class="futgg-tag none" style="color:#64748b;">✕ Fuera de Club</span>`;
+                clubStatusHtml = `<span class="futgg-tag none" style="color:#ffaa00; border:1px dashed #ffaa00; font-weight:700;" title="Aún no verificado en tu club. Haz clic en 'Buscar en Club' para comprobar">❓ Sin comprobar</span>`;
             }
 
             // Frecuencia en Soluciones
@@ -5108,7 +5235,7 @@
                 }
             }
             if (!suggested) {
-                suggested = p.futggPrice || p.estimatedPrice || p.futbinPrice || 0;
+                suggested = p.futggPrice || p.futbinPrice || (p.quality === 'bronze' ? 200 : (p.quality === 'silver' ? 350 : 700));
             }
 
             if (suggested > 0) {
@@ -5213,10 +5340,8 @@
                                 <span>${formatCoins(p.futbinPrice)}</span>
                                 <span style="font-size:9px; background:rgba(255, 204, 0, 0.2); color:#ffcc00; border:1px solid #ffcc00; border-radius:3px; padding:0 3px; font-weight:800;">BIN</span>
                             </div>
-                        ` : (p.estimatedPrice && p.estimatedPrice > 0) ? `
-                            <div style="font-weight:700; color:#38bdf8;">${formatCoins(p.estimatedPrice)}</div>
                         ` : `
-                            <span style="color:#8fa0b5; font-size:11px;" title="Sin precio estimado disponible">Sin precio</span>
+                            <span style="color:#8fa0b5; font-size:11px;" title="Precio mínimo base de mercado para esta calidad">${p.quality === 'bronze' ? '200 (Mín)' : (p.quality === 'silver' ? '350 (Mín)' : '700 (Mín)')}</span>
                         `}
                     </td>
                     <td>${marketHtml}</td>
@@ -5227,7 +5352,10 @@
         }
 
         html += `</tbody></table>`;
-        container.innerHTML = html;
+        container.innerHTML = bannerHtml + html;
+
+        const bannerScanBtn = document.getElementById('futbin-banner-scan-btn');
+        if (bannerScanBtn) bannerScanBtn.onclick = scanClubForFutbinPlayers;
 
         if (State.focusedGemId) {
             const targetRow = container.querySelector(`tr[data-eaid="${State.focusedGemId}"]`);
