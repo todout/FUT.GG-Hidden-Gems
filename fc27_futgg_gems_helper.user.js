@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.11.0
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: selector de desafíos SBC de FUTBIN, persistencia total de estado (jugadores, precios y club sin re-escaneos automáticos), columnas anti-solapamiento y modo seguro.
+// @version      1.13.0
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: integración con caché de Paletools (0 peticiones), escaneo multi-defId, corrección de solapamiento de columnas y listado unificado con lectura directa de precio.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -594,7 +594,7 @@
                         if (!name || name === 'Add Player' || name.includes('Coin')) continue;
 
                         const rating = parseInt(item.statsCard?.rating || item.rating || 0, 10);
-                        const position = (item.position?.value || item.statsCard?.playerPositions?.main || '').toUpperCase();
+                        const position = (item.statsCard?.playerPositions?.main || item.statsCard?.position || item.position?.value || '').toUpperCase();
                         const futbinId = item.id?.playerCardId?.value || item.baseId?.value || null;
 
                         // Extraer EA Asset ID real de las URLs oficiales de imagen de FUTBIN (/players/{eaId}.png)
@@ -1052,8 +1052,8 @@
 
         if (defId) {
             const numId = Number(defId);
-            criteria.defId = [numId];
             criteria.maskedDefId = numId;
+            criteria.defId = [];
         }
 
         return criteria;
@@ -1068,6 +1068,9 @@
         if (res.itemData && Array.isArray(res.itemData)) return res.itemData;
         if (res.response && Array.isArray(res.response.itemData)) return res.response.itemData;
         if (res.data && Array.isArray(res.data.itemData)) return res.data.itemData;
+        if (res.response && Array.isArray(res.response.auctionInfo)) return res.response.auctionInfo;
+        if (res.data && Array.isArray(res.data.auctionInfo)) return res.data.auctionInfo;
+        if (Array.isArray(res.auctionInfo)) return res.auctionInfo;
         return [];
     }
 
@@ -1328,25 +1331,43 @@
     };
 
     const DEFAULT_FUTBIN_SBC_CATALOG = [
-        { title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights" },
-        { title: "⚽ Partidos de Marquesina (Marquee)", url: "https://www.futbin.com/27/squad-building-challenges/Challenges" },
-        { title: "🧩 Híbrido de Ligas: The Whole Nine Yards", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/3/the-whole-nine-yards" },
-        { title: "🧩 Híbrido de Ligas: First XI", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/4/first-xi" },
-        { title: "🌍 Híbrido de Países: Six of the Best", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/7/six-of-the-best" },
-        { title: "🌍 Híbrido de Países: Around the World", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/8/around-the-world" },
-        { title: "⚔️ Híbrido Liga y País: The Challenger", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/9/the-challenger" },
-        { title: "⚔️ Híbrido Liga y País: Advanced", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/10/advanced" },
-        { title: "⚔️ Híbrido Liga y País: Fiendish", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/11/fiendish" },
-        { title: "⚔️ Híbrido Liga y País: Master Puzzle", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/12/master-puzzle" }
+        // Spooky Nights
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenge/ea/72/Spooky%20Nights" },
+
+        // Partidos de Marquesina (Marquee Matchups - 4 desafíos individuales)
+        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: PSG v Olympique Lyonnais", url: "https://www.futbin.com/27/squad-building-challenge/ea/96/PSG%20v%20Olympique%20Lyonnais" },
+        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: SSC Napoli v AS Roma", url: "https://www.futbin.com/27/squad-building-challenge/ea/97/SSC%20Napoli%20v%20AS%20Roma" },
+        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: Chelsea v Tottenham Hotspur", url: "https://www.futbin.com/27/squad-building-challenge/ea/98/Chelsea%20v%20Tottenham%20Hotspur" },
+        { group: "⚽ Partidos de Marquesina (Marquee Matchups)", title: "⚽ Marquesina: FC Barcelona v Real Madrid", url: "https://www.futbin.com/27/squad-building-challenge/ea/99/FC%20Barcelona%20v%20Real%20Madrid" },
+
+        // Híbrido de Ligas (Hybrid Leagues - 4 desafíos individuales)
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Give Me Five", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/1/give-me-five" },
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Seven-League Boots", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/2/seven-league-boots" },
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: The Whole Nine Yards", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/3/the-whole-nine-yards" },
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: First XI", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/4/first-xi" },
+
+        // Híbrido de Países (Hybrid Nations - 4 desafíos individuales)
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: The Final Four", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/5/the-final-four" },
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Six of the Best", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/6/six-of-the-best" },
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Elite Eight", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/7/elite-eight" },
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Around the World", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/8/around-the-world" },
+
+        // League & Nation Advanced (Híbrido Liga y País - 4 desafíos individuales)
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: The Challenger", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/9/the-challenger" },
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Advanced", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/10/advanced" },
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Fiendish", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/11/fiendish" },
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Master Puzzle", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/12/master-puzzle" }
     ];
 
     function getFutbinSbcCatalog() {
         try {
             const saved = GM_getValue('futbin_sbc_catalog', null);
             if (Array.isArray(saved) && saved.length > 0) {
-                const merged = [...saved];
+                // Filtrar entradas huérfanas que no tengan soluciones (ej. que apunten al hub /Challenges o a grupos)
+                const cleanedSaved = saved.filter(m => m && m.url && !m.url.endsWith('/squad-building-challenges/Challenges') && !m.url.endsWith('/squad-building-challenges/Challenges/'));
+                const merged = [...cleanedSaved];
                 for (const d of DEFAULT_FUTBIN_SBC_CATALOG) {
-                    if (!merged.some(m => m.url === d.url || (m.title && m.title.toLowerCase() === d.title.toLowerCase()))) {
+                    if (!merged.some(m => m.url.toLowerCase() === d.url.toLowerCase() || (m.title && m.title.toLowerCase() === d.title.toLowerCase()))) {
                         merged.push(d);
                     }
                 }
@@ -1456,26 +1477,82 @@
                     'User-Agent': navigator.userAgent,
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
                 },
-                onload: function (res) {
+                onload: async function (res) {
                     if (res.status === 200 && res.responseText) {
                         try {
                             const parser = new DOMParser();
                             const doc = parser.parseFromString(res.responseText, 'text/html');
-                            const anchors = Array.from(doc.querySelectorAll('a[href*="/squad-building-challenges/Challenges/"]'));
+                            const anchors = Array.from(doc.querySelectorAll('a[href*="/squad-building-challenge/"], a[href*="/squad-building-challenges/"]'));
                             const catalog = getFutbinSbcCatalog();
                             let added = 0;
+                            const groupUrlsToInspect = [];
+
                             for (const a of anchors) {
                                 const href = a.getAttribute('href');
-                                if (!href || !href.includes('/Challenges/')) continue;
+                                if (!href) continue;
                                 const fullUrl = href.startsWith('http') ? href : `https://www.futbin.com${href.startsWith('/') ? '' : '/'}${href}`;
                                 const cleanUrl = fullUrl.split('?')[0].split('#')[0];
+                                const pathLower = cleanUrl.toLowerCase();
+
+                                // Ignorar el hub genérico principal
+                                if (pathLower.endsWith('/squad-building-challenges/challenges') || pathLower.endsWith('/squad-building-challenges')) continue;
+
                                 const nameEl = a.querySelector('.challenge-name, .sbc-name, h4, h5, span') || a;
                                 let name = (nameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
-                                if (name && name.length >= 2 && !catalog.some(c => c.url.toLowerCase() === cleanUrl.toLowerCase())) {
-                                    catalog.push({ title: name, url: cleanUrl });
-                                    added++;
+
+                                // Si es un desafío individual (con /ea/ o /Challenges/\d+/)
+                                if (pathLower.includes('/ea/') || /\/challenges\/\d+\/[^/]+/i.test(pathLower)) {
+                                    if (name && name.length >= 2 && !catalog.some(c => c.url.toLowerCase() === cleanUrl.toLowerCase())) {
+                                        catalog.push({ group: "📚 Desafíos Activos", title: name, url: cleanUrl });
+                                        added++;
+                                    }
+                                } else if (/\/squad-building-challenge\/\d+$/i.test(pathLower) || /\/squad-building-challenges\/\d+$/i.test(pathLower)) {
+                                    // Es una página de grupo (ej: Marquee Matchups /59 o League & Nation /10)
+                                    if (!groupUrlsToInspect.includes(cleanUrl)) {
+                                        groupUrlsToInspect.push(cleanUrl);
+                                    }
                                 }
                             }
+
+                            // Si se encontraron grupos, inspeccionar los 2 primeros grupos para extraer sus sub-desafíos
+                            for (const gUrl of groupUrlsToInspect.slice(0, 3)) {
+                                try {
+                                    await new Promise(r => {
+                                        GM_xmlhttpRequest({
+                                            method: 'GET',
+                                            url: gUrl,
+                                            onload: function(gRes) {
+                                                if (gRes.status === 200 && gRes.responseText) {
+                                                    const gDoc = parser.parseFromString(gRes.responseText, 'text/html');
+                                                    const gAnchors = Array.from(gDoc.querySelectorAll('a[href*="/squad-building-challenge/ea/"], a[href*="/squad-building-challenges/Challenges/"]'));
+                                                    const gTitleEl = gDoc.querySelector('h1, .challenge-name, .sbc-header-title');
+                                                    const gTitle = gTitleEl ? gTitleEl.textContent.replace(/sbc/i, '').trim() : 'SBC Grupo';
+
+                                                    for (const ga of gAnchors) {
+                                                        const gh = ga.getAttribute('href');
+                                                        if (!gh) continue;
+                                                        const gFull = gh.startsWith('http') ? gh : `https://www.futbin.com${gh.startsWith('/') ? '' : '/'}${gh}`;
+                                                        const gClean = gFull.split('?')[0].split('#')[0];
+                                                        const subNameEl = ga.querySelector('.challenge-name, .sbc-name, h4, h5, span') || ga;
+                                                        let subName = (subNameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
+                                                        if (subName && subName.length >= 2 && !catalog.some(c => c.url.toLowerCase() === gClean.toLowerCase())) {
+                                                            catalog.push({
+                                                                group: gTitle,
+                                                                title: `${gTitle}: ${subName}`,
+                                                                url: gClean
+                                                            });
+                                                            added++;
+                                                        }
+                                                    }
+                                                }
+                                                r();
+                                            },
+                                            onerror: () => r()
+                                        });
+                                    });
+                                } catch (eGrp) { }
+                            }
+
                             if (catalog.length > 0) {
                                 GM_setValue('futbin_sbc_catalog', catalog);
                                 resolve(catalog);
@@ -1496,13 +1573,25 @@
         const catalog = getFutbinSbcCatalog();
         const currentUrl = (State.futbinSbcData && State.futbinSbcData.challengeUrl) || (document.getElementById('futbin-sbc-url-input')?.value.trim()) || '';
 
+        // Agrupar desafíos por optgroup
+        const groups = {};
+        for (const item of catalog) {
+            const grp = item.group || "📚 Otros Desafíos";
+            if (!groups[grp]) groups[grp] = [];
+            groups[grp].push(item);
+        }
+
         let html = `<option value="">-- Elige un SBC de la lista --</option>`;
         let matched = false;
 
-        for (const item of catalog) {
-            const isSelected = currentUrl && (currentUrl.toLowerCase() === item.url.toLowerCase() || (item.url.length > 25 && currentUrl.toLowerCase().includes(item.url.toLowerCase())));
-            if (isSelected) matched = true;
-            html += `<option value="${item.url}" ${isSelected ? 'selected' : ''}>${item.title}</option>`;
+        for (const grpName of Object.keys(groups)) {
+            html += `<optgroup label="${grpName}">`;
+            for (const item of groups[grpName]) {
+                const isSelected = currentUrl && (currentUrl.toLowerCase() === item.url.toLowerCase() || (item.url.length > 25 && currentUrl.toLowerCase().includes(item.url.toLowerCase())));
+                if (isSelected) matched = true;
+                html += `<option value="${item.url}" ${isSelected ? 'selected' : ''}>${item.title}</option>`;
+            }
+            html += `</optgroup>`;
         }
 
         html += `<option value="custom" ${!matched && currentUrl ? 'selected' : ''}>✍️ Otra URL / Personalizado...</option>`;
@@ -1627,28 +1716,35 @@
 
     function matchesCard(it, eaId, name) {
         if (!it) return false;
+        const itemObj = it.itemData || it._item || it.item || it;
         const numEaId = Number(eaId || 0);
-        const resId = Number(it.resourceId || 0);
-        const defId = Number(it.definitionId || 0);
-        const maskedId = typeof it.getMaskedResourceId === 'function' ? Number(it.getMaskedResourceId()) : 0;
-        const staticId = it._staticData ? Number(it._staticData.id || it._staticData.defId || it._staticData.assetId || 0) : 0;
-        const assetId = Number(it.assetId || 0);
-        const conceptId = Number(it.conceptId || 0);
+        const resId = Number(itemObj.resourceId || it.resourceId || 0);
+        const defId = Number(itemObj.definitionId || it.definitionId || 0);
+        const maskedId = typeof itemObj.getMaskedResourceId === 'function' ? Number(itemObj.getMaskedResourceId()) : (typeof it.getMaskedResourceId === 'function' ? Number(it.getMaskedResourceId()) : 0);
+        const staticId = itemObj._staticData ? Number(itemObj._staticData.id || itemObj._staticData.defId || itemObj._staticData.assetId || 0) : (it._staticData ? Number(it._staticData.id || it._staticData.defId || it._staticData.assetId || 0) : 0);
+        const assetId = Number(itemObj.assetId || it.assetId || 0);
+        const conceptId = Number(itemObj.conceptId || it.conceptId || 0);
+        const baseId = Number(itemObj.baseId || it.baseId || 0);
+
+        // En EA FC, los 24 bits inferiores de resourceId o definitionId corresponden al assetId base
+        const maskedBitwise = (resId > 0) ? (resId & 0x00FFFFFF) : 0;
+        const defBitwise = (defId > 0) ? (defId & 0x00FFFFFF) : 0;
 
         // 1. Coincidencia directa por ID si se dispone de eaId (estricta e infalible)
         if (numEaId > 0) {
-            return (resId === numEaId || defId === numEaId || maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId);
+            return (resId === numEaId || defId === numEaId || maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId || baseId === numEaId || maskedBitwise === numEaId || defBitwise === numEaId);
         }
 
         // 2. Coincidencia por nombre exacto únicamente si NO se dispone de ningún eaId
-        if (name && it._staticData) {
+        const dataObj = itemObj._staticData || it._staticData;
+        if (name && dataObj) {
             const cleanTarget = name.toLowerCase().trim();
             if (cleanTarget.length >= 4) {
                 const names = [
-                    it._staticData.name,
-                    it._staticData.lastName,
-                    it._staticData.firstName,
-                    it._staticData.commonName
+                    dataObj.name,
+                    dataObj.lastName,
+                    dataObj.firstName,
+                    dataObj.commonName
                 ].filter(Boolean).map(n => n.toLowerCase().trim());
                 if (names.some(n => n === cleanTarget)) {
                     return true;
@@ -1678,7 +1774,7 @@
                 criteria.offset = 0;
                 criteria.type = 'player';
                 criteria.maskedDefId = eaId;
-                criteria.defId = [eaId];
+                criteria.defId = [];
 
                 const res = await callEAService(win.services.Club.search(criteria));
                 const items = extractItemsFromEaResponse(res);
@@ -1769,6 +1865,132 @@
         renderCurrentTable();
     }
 
+    // =========================================================================
+    // ESCANEO EN BLOQUE INTELIGENTE DE CLUB (PALETOOLS INTEGRATION + MULTI-DEFID)
+    // =========================================================================
+    async function findCardsInClubBatch(cardsToFind, isSilent = false) {
+        if (!cardsToFind || cardsToFind.length === 0) return 0;
+        const win = getAppWindow();
+        let foundCount = 0;
+
+        // 1. PRIORIDAD 1: Gancho directo a Paletools Club Index en memoria (0 peticiones a EA, 0ms)
+        try {
+            if (typeof win.clubIndexDebug === 'function') {
+                const ptDebug = win.clubIndexDebug();
+                if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
+                    console.log(`%c[FC 27 Helper] ⚡ Paletools Club Index detectado (${ptDebug.players.length} jugadores en RAM). Sincronizando al instante...`, "color:#00ff88; font-weight:bold;");
+                    const ptPlayers = ptDebug.players;
+                    for (const card of cardsToFind) {
+                        const eaId = Number(card.eaId);
+                        if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) continue;
+
+                        const matched = ptPlayers.find(it => matchesCard(it, eaId, card.name));
+                        if (matched) {
+                            matched._isTradeable = isItemTradeable(matched);
+                            State.clubMatches[eaId] = matched;
+                            foundCount++;
+                        }
+                        State.clubScanned[eaId] = true;
+                    }
+                    if (!isSilent && foundCount > 0) {
+                        notificar(`⚡ Sincronizado con Paletools (${foundCount} encontradas en memoria)`, "#00ff88");
+                    }
+                    return foundCount;
+                }
+            }
+        } catch (ePt) {
+            console.warn("[FC 27 Helper] Error al leer Paletools clubIndexDebug:", ePt);
+        }
+
+        // 2. PRIORIDAD 2: Búsqueda multicarta en EA vía services.Club.search con criteria.defId = [ids...] (Estilo Paletools)
+        // Agrupa hasta 60 IDs por llamada (1 sola petición a EA en vez de 50 individuales)
+        try {
+            if (win.services && win.services.Club && typeof win.services.Club.search === 'function') {
+                const missingCards = cardsToFind.filter(c => {
+                    const id = Number(c.eaId);
+                    return id > 0 && !State.sellingMatches[id] && !State.soldMatches[id] && !State.transferMatches[id];
+                });
+
+                if (missingCards.length > 0) {
+                    const BATCH_SIZE = 60;
+                    for (let i = 0; i < missingCards.length; i += BATCH_SIZE) {
+                        const chunk = missingCards.slice(i, i + BATCH_SIZE);
+                        const defIds = chunk.map(c => Number(c.eaId)).filter(id => id > 0);
+
+                        if (defIds.length === 0) continue;
+
+                        console.log(`[FC 27 Helper] 🚀 Consultando lote de ${defIds.length} cartas en el Club en 1 sola llamada a EA...`);
+                        const criteria = createSearchCriteria();
+                        criteria.count = 90;
+                        criteria.offset = 0;
+                        criteria.type = 'player';
+                        criteria.defId = defIds;
+                        criteria.maskedDefId = 0;
+
+                        const res = await callEAService(win.services.Club.search(criteria));
+                        const items = extractItemsFromEaResponse(res);
+
+                        for (const card of chunk) {
+                            const eaId = Number(card.eaId);
+                            const match = items.find(it => matchesCard(it, eaId, card.name));
+                            if (match) {
+                                match._isTradeable = isItemTradeable(match);
+                                State.clubMatches[eaId] = match;
+                                foundCount++;
+                            }
+                            State.clubScanned[eaId] = true;
+                        }
+
+                        // Verificar en Almacenamiento/Storage de duplicados en bloque para las no encontradas
+                        if (win.services && win.services.Item && typeof win.services.Item.searchStorageItems === 'function') {
+                            try {
+                                const stillMissing = chunk.filter(c => !State.clubMatches[Number(c.eaId)]);
+                                const stillMissingIds = stillMissing.map(c => Number(c.eaId)).filter(id => id > 0);
+                                if (stillMissingIds.length > 0) {
+                                    const storCrit = createSearchCriteria();
+                                    storCrit.count = 90;
+                                    storCrit.offset = 0;
+                                    storCrit.type = 'player';
+                                    storCrit.defId = stillMissingIds;
+                                    storCrit.maskedDefId = 0;
+                                    const storRes = await callEAService(win.services.Item.searchStorageItems(storCrit));
+                                    const storItems = extractItemsFromEaResponse(storRes);
+                                    for (const card of stillMissing) {
+                                        const eaId = Number(card.eaId);
+                                        const match = storItems.find(it => matchesCard(it, eaId, card.name));
+                                        if (match) {
+                                            match._isTradeable = isItemTradeable(match);
+                                            State.clubMatches[eaId] = match;
+                                            foundCount++;
+                                        }
+                                    }
+                                }
+                            } catch (eStor) { }
+                        }
+
+                        if (i + BATCH_SIZE < missingCards.length) {
+                            await randomDelay(400, 700);
+                        }
+                    }
+
+                    return foundCount;
+                }
+            }
+        } catch (eEa) {
+            console.warn("[FC 27 Helper] Fallo en búsqueda en bloque de club, ejecutando fallback individual:", eEa);
+        }
+
+        // 3. FALLBACK: Consulta individual quirúrgica sólo si fallaron las anteriores
+        for (const card of cardsToFind) {
+            const eaId = Number(card.eaId);
+            if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) continue;
+            const it = await findCardInAccount(card);
+            if (it) foundCount++;
+            State.clubScanned[eaId] = true;
+        }
+        return foundCount;
+    }
+
     async function scanClubForGems(isSilent = false) {
         const win = getAppWindow();
         if (!win.services || !win.services.Club) {
@@ -1828,14 +2050,12 @@
             }
         }
 
-        // 2. Para las gemas restantes, buscarlas en el Club en vivo
-        for (const gem of State.gems) {
-            const eaId = Number(gem.eaId);
-            if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) {
-                continue;
-            }
-            await findCardInAccount(gem);
-        }
+        // 2. Para las gemas restantes, buscarlas en bloque (Paletools en RAM o defId batch a EA)
+        const gemsToScan = State.gems.filter(g => {
+            const eaId = Number(g.eaId);
+            return !State.sellingMatches[eaId] && !State.soldMatches[eaId] && !State.transferMatches[eaId];
+        });
+        await findCardsInClubBatch(gemsToScan, isSilent);
 
         renderGemsTable();
         updateBadge();
@@ -1864,7 +2084,7 @@
             if (win.gNavManager) {
                 const criteria = createSearchCriteria(eaId);
                 criteria.maskedDefId = eaId;
-                criteria.defId = [eaId];
+                criteria.defId = [];
                 criteria.type = 'player';
                 if (typeof win.UTSearchResultsViewController === 'function') {
                     const searchVC = new win.UTSearchResultsViewController();
@@ -1891,7 +2111,7 @@
 
         const priceMap = {};
         for (const item of allItems) {
-            const buyNow = (item._auction && item._auction.buyNowPrice) || item.buyNowPrice || 0;
+            const buyNow = (item._auction && item._auction.buyNowPrice) || item.buyNowPrice || (item.auction && item.auction.buyNowPrice) || (item.itemData && item.itemData.buyNowPrice) || 0;
             if (buyNow > 0) {
                 priceMap[buyNow] = (priceMap[buyNow] || 0) + 1;
             }
@@ -2040,8 +2260,8 @@
                 const criteria = createSearchCriteria(eaId);
                 criteria.count = 21;
                 criteria.type = (win.SearchType && win.SearchType.PLAYER) || 'player';
-                criteria.defId = [eaId];
                 criteria.maskedDefId = eaId;
+                criteria.defId = [];
                 if (targetMaxBuy > 0) {
                     criteria.maxBuy = targetMaxBuy;
                 }
@@ -2112,7 +2332,7 @@
             // cartas a precio de descarte (200-400) que expiran en 50 min quedan ocultas detrás de cartas a 1500 que expiran en 5 min.
             // Verificamos si existen cartas más baratas que el precio mínimo aparente para encontrar el piso real:
             if (allItems.length > 0 && !forceOpen) {
-                const tempLowest = Math.min(...allItems.map(it => (it._auction && it._auction.buyNowPrice) || it.buyNowPrice || 9999999));
+                const tempLowest = Math.min(...allItems.map(it => (it._auction && it._auction.buyNowPrice) || it.buyNowPrice || (it.auction && it.auction.buyNowPrice) || (it.itemData && it.itemData.buyNowPrice) || 9999999));
                 if (tempLowest > 250 && (allItems.length >= 21 || stage === 3 || estPrice <= 0)) {
                     const step = getBidStep(tempLowest);
                     const checkMaxBuy = Math.max(200, tempLowest - step);
@@ -2121,8 +2341,8 @@
                     const subCriteria = createSearchCriteria(eaId);
                     subCriteria.count = 21;
                     subCriteria.type = (win.SearchType && win.SearchType.PLAYER) || 'player';
-                    subCriteria.defId = [eaId];
                     subCriteria.maskedDefId = eaId;
+                    subCriteria.defId = [];
                     subCriteria.maxBuy = checkMaxBuy;
                     subCriteria.__futggCustomBusted = true;
 
@@ -2459,6 +2679,22 @@
             return;
         }
 
+        // Si la carta está en el Club o en Almacenamiento, asegurar movimiento previo a Transferibles
+        // En EA FC Web App, listar directamente desde Club/Storage frecuentemente falla con "Destination full" o "Error en servicio de EA"
+        const transferPile = (win.enums && win.enums.FUTItemPile && win.enums.FUTItemPile.TRANSFER) ||
+            (win.enums && win.enums.ItemPile && win.enums.ItemPile.TRANSFER) || 2;
+        const currentPile = item.pile || item._pile || (typeof item.getPile === 'function' ? item.getPile() : 0);
+
+        if (currentPile !== transferPile && !State.transferMatches[eaId]) {
+            console.log(`[FC 27 Helper] 📋 ${gem.name} está en el Club (pile ${currentPile}). Moviendo primero a Transferibles para listar con seguridad...`);
+            const moved = await moveToTransferList(gem, true);
+            if (!moved) {
+                // Si no se pudo mover (ej. lista llena o en plantilla activa), la función moveToTransferList ya notificó la razón exacta
+                return;
+            }
+            item = State.transferMatches[eaId] || item;
+        }
+
         // Consultar límites oficiales de precio en tiempo real a EA si están disponibles
         if (services.Item && typeof services.Item.requestPriceLimits === 'function') {
             try {
@@ -2488,16 +2724,22 @@
             }
         }
 
-        // Asegurarse de que el precio de venta NUNCA supere el precio máximo real de la carta
-        if (realMaxPrice > 0 && buyNow > realMaxPrice) {
-            buyNow = realMaxPrice;
-        }
+        // Validar estrictamente contra los Price Limits oficiales de EA del ítem para evitar rechazo 400
+        const priceLimits = (typeof item.getPriceLimits === 'function' ? item.getPriceLimits() : null) || item._itemPriceLimits;
+        const minLimit = (priceLimits && priceLimits.minimum > 0) ? priceLimits.minimum : 200;
+        const maxLimit = (priceLimits && priceLimits.maximum > 0) ? priceLimits.maximum : (realMaxPrice > 0 ? realMaxPrice : 10000);
+
+        if (maxLimit > 0 && buyNow > maxLimit) buyNow = maxLimit;
+        if (minLimit > 0 && buyNow < minLimit) buyNow = minLimit;
 
         const validBuyNow = roundToValidBid(buyNow, 'down');
-        const startBid = calculateStartBid(validBuyNow);
+        let startBid = calculateStartBid(validBuyNow);
+        if (minLimit > 0 && startBid < minLimit) startBid = minLimit;
+        if (startBid >= validBuyNow) {
+            startBid = Math.max(minLimit, validBuyNow - getBidStep(validBuyNow));
+        }
 
         try {
-            // En EA FC Web App, services.Item.list lista directamente cartas desde Club o Transferibles sin necesidad de mover
             await callEAService(services.Item.list(item, startBid, validBuyNow, 3600));
             scheduleDismissEaDialog();
 
@@ -2769,7 +3011,7 @@
         let matched = 0;
         const win = getAppWindow();
 
-        // Cargar transferibles si están disponibles en RAM
+        // 1. Cargar transferibles si están disponibles en RAM de EA
         if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
             try {
                 const trItems = win.repositories.Item.getTransferList();
@@ -2781,6 +3023,26 @@
                 }
             } catch (e) { }
         }
+
+        // 2. Comprobar al instante en el Club Index de Paletools si está cargado en RAM (0 peticiones a EA)
+        try {
+            if (typeof win.clubIndexDebug === 'function') {
+                const ptDebug = win.clubIndexDebug();
+                if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
+                    for (const p of State.futbinSbcData.players) {
+                        const eaId = Number(p.eaId);
+                        if (eaId > 0 && !State.clubMatches[eaId] && !State.transferMatches[eaId] && !State.sellingMatches[eaId]) {
+                            const match = ptDebug.players.find(it => matchesCard(it, eaId, p.name));
+                            if (match) {
+                                match._isTradeable = isItemTradeable(match);
+                                State.clubMatches[eaId] = match;
+                                State.clubScanned[eaId] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (ePt) { }
 
         for (const p of State.futbinSbcData.players) {
             const eaId = Number(p.eaId);
@@ -2820,7 +3082,7 @@
 
         const missing = State.futbinSbcData.players.filter(p => {
             const eaId = Number(p.eaId);
-            return eaId > 0 && !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId] && !State.clubScanned[eaId];
+            return eaId > 0 && !State.sellingMatches[eaId] && !State.transferMatches[eaId] && !State.clubMatches[eaId] && !State.soldMatches[eaId];
         });
 
         if (missing.length === 0) {
@@ -2831,73 +3093,11 @@
         State.isScanningClub = true;
         State.forceCancelAllOperations = false;
         renderBatchControls();
-        if (!isSilent) notificar(`🔍 Comprobando ${missing.length} cartas en tu Club con delays seguros...`, "#00ccff");
+        if (!isSilent) notificar(`🔍 Verificando ${missing.length} cartas en tu Club de forma ultrarrápida...`, "#00ccff");
 
-        const win = getAppWindow();
         let found = 0;
-        let index = 0;
-
         try {
-            for (const p of missing) {
-                if (!State.isScanningClub || State.forceCancelAllOperations) break;
-                index++;
-                const eaId = Number(p.eaId);
-                const name = p.name || 'Carta';
-
-                updateBatchStatus(`Club (${index}/${missing.length}): Comprobando ${name}...`);
-
-                // Consulta segura a services.Club.search por defId exacto
-                if (win.services && win.services.Club && typeof win.services.Club.search === 'function') {
-                    try {
-                        const criteria = createSearchCriteria(eaId);
-                        criteria.count = 15;
-                        criteria.offset = 0;
-                        criteria.type = 'player';
-                        if (eaId > 0) {
-                            criteria.maskedDefId = eaId;
-                            criteria.defId = [eaId];
-                        }
-
-                        let res = await callEAService(win.services.Club.search(criteria));
-                        let items = extractItemsFromEaResponse(res);
-                        let match = items && items.find(it => matchesCard(it, eaId, name));
-
-                        // Si no se encontró en club, verificar en Almacenamiento/Storage de duplicados
-                        if (!match && win.services && win.services.Item && typeof win.services.Item.searchStorageItems === 'function') {
-                            try {
-                                const storageCrit = createSearchCriteria(eaId);
-                                storageCrit.count = 20;
-                                storageCrit.offset = 0;
-                                storageCrit.type = 'player';
-                                storageCrit.maskedDefId = eaId;
-                                storageCrit.defId = [eaId];
-                                const storRes = await callEAService(win.services.Item.searchStorageItems(storageCrit));
-                                const storItems = extractItemsFromEaResponse(storRes);
-                                match = storItems && storItems.find(it => matchesCard(it, eaId, name));
-                            } catch (eStor) { }
-                        }
-
-                        if (match) {
-                            match._isTradeable = isItemTradeable(match);
-                            State.clubMatches[eaId] = match;
-                            found++;
-                            console.log(`[FUTBIN SBC] 🟢 Encontrado en cuenta: ${name} (ID: ${eaId}, Tradeable: ${match._isTradeable})`, match);
-                        }
-                    } catch (err) {
-                        console.warn(`[FUTBIN SBC] Error al consultar ${name} en club:`, err);
-                    }
-                }
-
-                State.clubScanned[eaId] = true;
-
-                if (index % 2 === 0 || found > 0) {
-                    updateFutbinTabBadge();
-                    renderFutbinSbcTable();
-                }
-
-                // Delay seguro entre consultas individuales para no saturar EA
-                await randomDelay(600, 1000, () => !State.isScanningClub || State.forceCancelAllOperations);
-            }
+            found = await findCardsInClubBatch(missing, isSilent);
         } finally {
             State.isScanningClub = false;
             updateFutbinTabBadge();
@@ -3465,20 +3665,21 @@
             .futgg-tag.extinct { background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid #ff5555; }
 
             .futgg-price-input {
-                width: 58px;
-                min-width: 48px;
-                box-sizing: border-box;
-                background: #131c28;
-                border: 1px solid #35475e;
-                color: #fff;
-                padding: 2px 4px;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 700;
-                text-align: center;
-                flex-shrink: 0;
+                width: 58px !important;
+                min-width: 50px !important;
+                max-width: 65px !important;
+                box-sizing: border-box !important;
+                background: #131c28 !important;
+                border: 1px solid #35475e !important;
+                color: #fff !important;
+                padding: 2px 4px !important;
+                border-radius: 4px !important;
+                font-size: 11px !important;
+                font-weight: 700 !important;
+                text-align: center !important;
+                flex-shrink: 0 !important;
             }
-            .futgg-price-input:focus { border-color: #00ff88; outline: none; }
+            .futgg-price-input:focus { border-color: #00ff88 !important; outline: none !important; }
 
             .futgg-footer {
                 padding: 12px 20px;
@@ -4477,7 +4678,13 @@
             } else if (action === 'move') {
                 if (gem) moveToTransferList(gem);
             } else if (action === 'list') {
-                if (gem) listCardOnMarket(gem);
+                if (gem) {
+                    const row = btn.closest('tr');
+                    const priceInput = row ? row.querySelector('.futgg-price-input') : null;
+                    const priceVal = priceInput ? parseInt(priceInput.value.replace(/[^0-9]/g, ''), 10) : null;
+                    const chosenPrice = (priceVal && priceVal > 0) ? priceVal : (State.customPrices[eaId] || null);
+                    listCardOnMarket(gem, chosenPrice);
+                }
             } else if (action === 'adjust-price') {
                 const dir = parseInt(btn.getAttribute('data-dir'), 10) || 1;
                 adjustPriceByEaId(eaId, dir);
@@ -4836,10 +5043,21 @@
     }
 
     function adjustPriceByEaId(eaId, direction) {
-        const current = State.customPrices[eaId] || 1000;
+        let current = State.customPrices[eaId];
+        if (!current) {
+            const player = findAnyPlayerById(eaId);
+            const market = State.marketPrices[eaId];
+            if (market && market.lowestBin) {
+                current = (market.hasOutlier ? market.realisticBin : market.lowestBin) - CONFIG.undercutAmount;
+            } else if (player) {
+                current = player.estimatedPrice || player.futggPrice || player.futbinPrice;
+            }
+            if (!current || current <= 0) current = 1000;
+        }
         const step = getBidStep(current);
         const nextPrice = direction > 0 ? current + step : Math.max(200, current - step);
         State.customPrices[eaId] = roundToValidBid(nextPrice, direction > 0 ? 'up' : 'down');
+        persistFutbinState();
         renderCurrentTable();
     }
 
@@ -4991,12 +5209,12 @@
             <table class="futgg-table">
                 <thead>
                     <tr>
-                        <th style="width:20%; min-width:130px;">Jugador</th>
-                        <th style="width:12%; min-width:80px;">Ref. FUT.GG</th>
-                        <th style="width:5%; min-width:38px; text-align:center;" title="Estado en tu Club">Club</th>
-                        <th style="width:27%; min-width:155px;">Mercado en Vivo</th>
-                        <th style="width:18%; min-width:105px;">Precio Venta</th>
-                        <th style="width:18%; min-width:100px; text-align:center;">Acción</th>
+                        <th style="width:20%; min-width:125px;">Jugador</th>
+                        <th style="width:10%; min-width:75px;">Ref. FUT.GG</th>
+                        <th style="width:4%; min-width:36px; text-align:center;" title="Estado en tu Club">Club</th>
+                        <th style="width:26%; min-width:145px;">Mercado en Vivo</th>
+                        <th style="width:18%; min-width:125px; white-space:nowrap;">Precio Venta</th>
+                        <th style="width:22%; min-width:160px; text-align:center; white-space:nowrap;">Acción</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -5187,13 +5405,13 @@
                 priceColHtml = `<div style="font-size:11px; color:#64748b; font-style:italic;">No comerciable</div>`;
             } else {
                 priceColHtml = `
-                    <div style="display:flex; flex-direction:column; gap:2px;">
-                        <div style="display:flex; align-items:center; gap:2px; flex-wrap:nowrap;">
-                            <button class="futgg-btn" style="padding:2px 5px; font-size:10px; flex-shrink:0;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
-                            <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${customPrice}" />
-                            <button class="futgg-btn" style="padding:2px 5px; font-size:10px; flex-shrink:0;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
+                    <div style="display:flex; flex-direction:column; gap:2px; min-width:115px;">
+                        <div style="display:inline-flex; align-items:center; gap:2px; flex-wrap:nowrap;">
+                            <button class="futgg-btn" style="padding:2px 6px; font-size:11px; flex-shrink:0; font-weight:bold; line-height:1;" data-action="adjust-price" data-dir="-1" data-eaid="${eaId}">-</button>
+                            <input type="text" class="futgg-price-input" data-eaid="${eaId}" value="${customPrice}" style="width:58px !important; min-width:50px; max-width:65px; flex-shrink:0; text-align:center;" />
+                            <button class="futgg-btn" style="padding:2px 6px; font-size:11px; flex-shrink:0; font-weight:bold; line-height:1;" data-action="adjust-price" data-dir="1" data-eaid="${eaId}">+</button>
                         </div>
-                        <div style="font-size:10px; color:#8fa0b5;">
+                        <div style="font-size:10px; color:#8fa0b5; white-space:nowrap; margin-top:2px;">
                             Puja: <b style="color:#00ff88;">${formatCoins(calculateStartBid(customPrice))}</b> (1h)
                         </div>
                     </div>
@@ -5213,16 +5431,16 @@
             } else if (inTransfer) {
                 const isExtinct = market && market.isExtinct;
                 actionHtml = `
-                    <div style="display:flex; gap:4px; align-items:center;">
-                        <button class="futgg-btn ${isExtinct ? '' : 'primary'}" style="padding:4px 10px; font-size:11px; ${isExtinct ? 'background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;' : ''}" data-action="list" data-eaid="${eaId}" title="${isExtinct ? `Listar carta extinta al 90% del máximo (${formatCoins(customPrice)})` : 'Listar en el mercado por el precio elegido'}">${isExtinct ? '💎 Listar (90%)' : '🚀 Listar'}</button>
+                    <div style="display:inline-flex; gap:4px; align-items:center; justify-content:center; flex-wrap:nowrap; white-space:nowrap;">
+                        <button class="futgg-btn ${isExtinct ? '' : 'primary'}" style="padding:3px 9px; font-size:11px; flex-shrink:0; white-space:nowrap; ${isExtinct ? 'background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;' : ''}" data-action="list" data-eaid="${eaId}" title="${isExtinct ? `Listar carta extinta al 90% del máximo (${formatCoins(customPrice)})` : 'Listar en el mercado por el precio elegido'}">${isExtinct ? '💎 Listar (90%)' : '🚀 Listar'}</button>
                     </div>
                 `;
             } else if (inClub && isItemTradeable(inClub)) {
                 const isExtinct = market && market.isExtinct;
                 actionHtml = `
-                    <div style="display:flex; gap:4px; align-items:center;">
-                        <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
-                        <button class="futgg-btn ${isExtinct ? '' : 'primary'}" style="padding:4px 10px; font-size:11px; ${isExtinct ? 'background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;' : ''}" data-action="list" data-eaid="${eaId}" title="${isExtinct ? `Listar carta extinta al 90% del máximo (${formatCoins(customPrice)})` : 'Listar directamente en el mercado'}">${isExtinct ? '💎 Listar (90%)' : '🚀 Listar'}</button>
+                    <div style="display:inline-flex; gap:4px; align-items:center; justify-content:center; flex-wrap:nowrap; white-space:nowrap;">
+                        <button class="futgg-btn" style="padding:3px 7px; font-size:11px; flex-shrink:0; white-space:nowrap;" data-action="move" data-eaid="${eaId}" title="Mover a Transferibles">📥 Mover</button>
+                        <button class="futgg-btn ${isExtinct ? '' : 'primary'}" style="padding:3px 9px; font-size:11px; flex-shrink:0; white-space:nowrap; ${isExtinct ? 'background:#b91c1c; border-color:#ef4444; color:#fff; font-weight:bold;' : ''}" data-action="list" data-eaid="${eaId}" title="${isExtinct ? `Listar carta extinta al 90% del máximo (${formatCoins(customPrice)})` : 'Listar directamente en el mercado'}">${isExtinct ? '💎 Listar (90%)' : '🚀 Listar'}</button>
                     </div>
                 `;
             } else if (inClub && !isItemTradeable(inClub)) {
@@ -5260,8 +5478,8 @@
                     </td>
                     <td style="text-align:center; padding:6px 2px;">${clubStatusHtml}</td>
                     <td>${marketHtml}</td>
-                    <td style="white-space:nowrap;">${priceColHtml}</td>
-                    <td style="text-align:center; white-space:nowrap;">${actionHtml}</td>
+                    <td style="white-space:nowrap; min-width:125px;">${priceColHtml}</td>
+                    <td style="text-align:center; white-space:nowrap; min-width:160px;">${actionHtml}</td>
                 </tr>
             `;
         }
@@ -5400,9 +5618,9 @@
                         <th style="width:4%; min-width:36px; text-align:center;" title="Estado en tu Club">Club</th>
                         <th style="width:9%; min-width:66px;">Frec. SBC</th>
                         <th style="width:9%; min-width:65px;">Ref. GG</th>
-                        <th style="width:25%; min-width:150px;">Mercado Real (EA)</th>
-                        <th style="width:17%; min-width:125px;">Listar Por</th>
-                        <th style="width:20%; min-width:145px; text-align:center;">Acción</th>
+                        <th style="width:25%; min-width:145px;">Mercado Real (EA)</th>
+                        <th style="width:17%; min-width:125px; white-space:nowrap;">Listar Por</th>
+                        <th style="width:20%; min-width:155px; text-align:center; white-space:nowrap;">Acción</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -5690,8 +5908,8 @@
                         `}
                     </td>
                     <td>${marketHtml}</td>
-                    <td style="white-space:nowrap;">${priceColHtml}</td>
-                    <td style="text-align:center; white-space:nowrap;">${actionHtml}</td>
+                    <td style="white-space:nowrap; min-width:125px;">${priceColHtml}</td>
+                    <td style="text-align:center; white-space:nowrap; min-width:155px;">${actionHtml}</td>
                 </tr>
             `;
         }
@@ -5763,9 +5981,25 @@
         }
     });
 
-    // Inicializar UI y listener de sincronización FUTBIN
+    // Inicializar UI y listeners
     setupPackOpeningListener();
     setupFutbinSbcSyncListener();
+
+    // Gancho de auto-sincronización cuando Paletools carga su índice de club en RAM
+    try {
+        const win = getAppWindow();
+        win.addEventListener('clubIndexLoaded', () => {
+            console.log("%c[FC 27 Helper] ⚡ Evento 'clubIndexLoaded' de Paletools recibido. Sincronizando jugadores del club en RAM...", "color:#00ff88; font-weight:bold;");
+            if (State.activeTab === 'futbin') {
+                matchFutbinPlayersWithKnownItems();
+                renderFutbinSbcTable();
+            } else if (State.gems && State.gems.length > 0) {
+                findCardsInClubBatch(State.gems, true).then(() => {
+                    renderGemsTable();
+                });
+            }
+        });
+    } catch (e) { }
 
     window.addEventListener('load', () => {
         setTimeout(createUI, 2000);
