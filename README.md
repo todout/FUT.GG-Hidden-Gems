@@ -147,3 +147,20 @@ Un script de terminal para inspeccionar tus joyas o forzar la sincronización si
 2. **Auto-Sincronización Silenciosa en Segundo Plano**:
    - Se eliminaron todas las notificaciones toast invasivas al adquirir cartas en el mercado o abrir sobres (`"Sobre detectado..."`).
    - La comprobación y sincronización de club tras compras o sobres opera 100% en segundo plano de manera transparente.
+
+## 🚀 Novedades v1.16.0 (SBCs de FUTBIN: Expiración y Gestión Completa)
+1. **Control de Expiración de SBCs en Tiempo Real**:
+   - Monitoreo continuo de la fecha y hora de expiración de cada desafío temporal (ej. *Scary Candy* en 21h, *Marquesinas* el jueves a las 18:00 UTC, *Spooky Nights* en 1 semana).
+   - El desplegable de SBCs muestra etiquetas visuales con el tiempo restante: `(Expira en 21h)`, `(Expira en ~48h / Jueves)`, `(Expira en 7d)` o `⚠️ [EXPIRADO]`.
+   - Si un SBC expira mientras está seleccionado, la cabecera activa muestra un aviso distintivo en rojo (`⚠️ SBC EXPIRADO - Ha dejado de estar activo`).
+2. **Purga Automática y Manual de Desafíos Caducados**:
+   - El catálogo purga de manera automática los desafíos expirados al cargar el script o consultar la lista.
+   - Botón directo **`⏳ Purgar`** en la barra de herramientas para eliminar todos los SBCs caducados en 1 clic.
+3. **Botón de Borrado Manual (`🗑️`) y Limpieza de Tabla (`🧹`)**:
+   - **`🗑️ Borrar SBC`**: Elimina de inmediato el desafío seleccionado del desplegable y lo añade a una lista negra persistente (`futbin_sbc_deleted_urls`), garantizando que **nunca resucite** tras recargas o escaneos automáticos.
+   - **`🧹 Limpiar Tabla`**: Vacía los jugadores cargados en la tabla del SBC activo y libera la memoria en un clic.
+   - Menú de gestión integrado directamente dentro del `<select>` de SBCs para acceso rápido.
+4. **Separación de Catálogo Permanente vs. Temporal**:
+   - Desafíos permanentes de iniciación (*Foundations*, mejoras permanentes) protegidos contra borrado involuntario.
+   - Desafíos temáticos o promocionales temporales con fecha de caducidad exacta y auto-extracción desde FUTBIN.
+

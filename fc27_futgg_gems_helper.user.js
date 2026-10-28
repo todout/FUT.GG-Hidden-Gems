@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.15.4
+// @version      1.16.0
 // @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: sincronización de club en memoria instantánea (sin interrogaciones falsas), filtro exclusivo para transferibles vendibles y soporte completo para SBCs.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -659,6 +659,7 @@
                     const anchors = Array.from(document.querySelectorAll('a[href*="/squad-building-challenges/Challenges/"], a[href*="/Challenges/"], a[href*="/challenges/"]'));
                     if (anchors.length > 0) {
                         const catalog = GM_getValue('futbin_sbc_catalog', []);
+                        const deletedUrls = GM_getValue('futbin_sbc_deleted_urls', []) || [];
                         let added = 0;
                         for (const a of anchors) {
                             const rawHref = a.getAttribute('href') || a.href;
@@ -666,10 +667,26 @@
                             const fullUrl = rawHref.startsWith('http') ? rawHref : `https://www.futbin.com${rawHref.startsWith('/') ? '' : '/'}${rawHref}`;
                             const cleanUrl = fullUrl.split('?')[0].split('#')[0];
                             if (cleanUrl.toLowerCase().includes('/challenges/home') || cleanUrl.toLowerCase().endsWith('/home')) continue;
+                            if (deletedUrls.includes(cleanUrl.toLowerCase())) continue;
+
+                            const cardEl = a.closest('.sbc-challenge, .card, .challenge-box, tr, li') || a.parentElement || a;
+                            const cardText = ((cardEl ? cardEl.textContent : '') || '').toLowerCase();
+                            if (cardText.includes('expired') || cardText.includes('expirado')) continue;
+
+                            let expiresAt = null;
+                            const mExp = cardText.match(/expir(?:es|ed|ación)?\s*(?:in|en)?\s*(\d+)\s*(d|h|m|days?|hours?|días?|horas?)/i);
+                            if (mExp) {
+                                const num = parseInt(mExp[1], 10);
+                                const unit = mExp[2].toLowerCase();
+                                if (unit.startsWith('d')) expiresAt = Date.now() + num * 86400000;
+                                else if (unit.startsWith('h')) expiresAt = Date.now() + num * 3600000;
+                                else if (unit.startsWith('m')) expiresAt = Date.now() + num * 60000;
+                            }
+
                             const nameEl = a.querySelector('.challenge-name, .sbc-name, h4, h5, span') || a;
                             let name = (nameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
                             if (name && name.length >= 2 && !catalog.some(c => c.url.toLowerCase() === cleanUrl.toLowerCase())) {
-                                catalog.push({ title: name, url: cleanUrl });
+                                catalog.push({ title: name, url: cleanUrl, expiresAt: expiresAt, isPermanent: false });
                                 added++;
                             }
                         }
@@ -1048,12 +1065,27 @@
                         return a.rating - b.rating;
                     });
 
+                    let docExpiresAt = null;
+                    try {
+                        const expiryEl = document.querySelector('.time-left, .challenge-time, .expire-time, .countdown, [class*="expire"], [class*="time-left"]');
+                        const pageText = ((expiryEl ? expiryEl.textContent : '') || document.body.textContent || '').toLowerCase();
+                        const mExp = pageText.match(/expir(?:es|ed|ación)?\s*(?:in|en)?\s*(\d+)\s*(d|h|m|days?|hours?|días?|horas?)/i);
+                        if (mExp) {
+                            const num = parseInt(mExp[1], 10);
+                            const unit = mExp[2].toLowerCase();
+                            if (unit.startsWith('d')) docExpiresAt = Date.now() + num * 86400000;
+                            else if (unit.startsWith('h')) docExpiresAt = Date.now() + num * 3600000;
+                            else if (unit.startsWith('m')) docExpiresAt = Date.now() + num * 60000;
+                        }
+                    } catch (e) { }
+
                     const payload = {
                         challengeTitle: challengeTitle,
                         challengeUrl: window.location.href.split('#')[0],
                         solutionCount: count,
                         totalSolutionsFound: solutionUrls.length,
                         players: aggregatedPlayers,
+                        expiresAt: docExpiresAt,
                         updatedAt: Date.now()
                     };
 
@@ -1525,69 +1557,222 @@
         syncCountdownInterval: null
     };
 
-    const DEFAULT_FUTBIN_SBC_CATALOG = [
-        // Spooky Nights y Scary Candy
-        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights" },
-        { group: "🎃 Eventos y Puzzles", title: "🎃 Scary Candy", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/113/scary-candy" },
+    // =========================================================================
+    // GESTIÓN DE EXPIRACIÓN Y LISTA NEGRA DE DESAFÍOS SBC
+    // =========================================================================
+    function getDeletedSbcUrls() {
+        try {
+            return GM_getValue('futbin_sbc_deleted_urls', []) || [];
+        } catch (e) {
+            return [];
+        }
+    }
 
-        // Partidos de Marquesina (Marquee Matchups - Grupo 59 y sus 4 desafíos completos)
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina (Grupo Completo / 4 Desafíos)", url: "https://www.futbin.com/27/squad-building-challenge/59" },
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 1: PSG v Olympique Lyonnais", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/96/psg-v-olympique-lyonnais" },
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 2: SSC Napoli v AS Roma", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/97/ssc-napoli-v-as-roma" },
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 3: Chelsea v Tottenham Hotspur", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/98/chelsea-v-tottenham-hotspur" },
-        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 4: FC Barcelona v Real Madrid", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/99/fc-barcelona-v-real-madrid" },
+    function addDeletedSbcUrl(url) {
+        if (!url) return;
+        try {
+            const clean = url.toLowerCase().split('?')[0].split('#')[0];
+            const list = getDeletedSbcUrls();
+            if (!list.includes(clean)) {
+                list.push(clean);
+                GM_setValue('futbin_sbc_deleted_urls', list);
+            }
+        } catch (e) { }
+    }
 
-        // Intro to Upgrade SBCs (Fundaciones / Mejoras fijas - otorgan sobres)
-        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Room to Grow", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/13/room-to-grow" },
-        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Build Up Play", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/14/build-up-play" },
-        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Raw Power", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/15/raw-power" },
+    function removeDeletedSbcUrl(url) {
+        if (!url) return;
+        try {
+            const clean = url.toLowerCase().split('?')[0].split('#')[0];
+            let list = getDeletedSbcUrls();
+            list = list.filter(u => u !== clean);
+            GM_setValue('futbin_sbc_deleted_urls', list);
+        } catch (e) { }
+    }
 
-        // Híbrido de Ligas (Hybrid Leagues - 4 desafíos individuales)
-        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Give Me Five", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/1/give-me-five" },
-        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Seven-League Boots", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/2/seven-league-boots" },
-        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: The Whole Nine Yards", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/3/the-whole-nine-yards" },
-        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: First XI", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/4/first-xi" },
+    function isSbcUrlDeleted(url) {
+        if (!url) return false;
+        try {
+            const clean = url.toLowerCase().split('?')[0].split('#')[0];
+            return getDeletedSbcUrls().includes(clean);
+        } catch (e) {
+            return false;
+        }
+    }
 
-        // Híbrido de Países (Hybrid Nations - 4 desafíos individuales)
-        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: The Final Four", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/5/the-final-four" },
-        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Six of the Best", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/6/six-of-the-best" },
-        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Elite Eight", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/7/elite-eight" },
-        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Around the World", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/8/around-the-world" },
+    function clearDeletedSbcUrls() {
+        try {
+            GM_setValue('futbin_sbc_deleted_urls', []);
+        } catch (e) { }
+    }
 
-        // League & Nation Advanced (Híbrido Liga y País - 4 desafíos individuales)
-        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: The Challenger", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/9/the-challenger" },
-        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Advanced", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/10/advanced" },
-        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Fiendish", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/11/fiendish" },
-        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Master Puzzle", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/12/master-puzzle" }
+    function isSbcExpired(item) {
+        if (!item) return false;
+        if (item.isPermanent) return false;
+        if (item.isExpired) return true;
+        if (item.expiresAt && typeof item.expiresAt === 'number') {
+            return Date.now() > item.expiresAt;
+        }
+        return false;
+    }
+
+    function getSbcExpiryLabel(item) {
+        if (!item || item.isPermanent) return '';
+        if (item.isExpired) return ' ⚠️[EXPIRADO]';
+        if (item.expiresAt && typeof item.expiresAt === 'number') {
+            const diffMs = item.expiresAt - Date.now();
+            if (diffMs <= 0) return ' ⚠️[EXPIRADO]';
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            if (diffHours < 1) {
+                const diffMins = Math.max(1, Math.floor(diffMs / (1000 * 60)));
+                return ` (Expira en ${diffMins}m)`;
+            }
+            if (diffHours <= 24) {
+                return ` (Expira en ${diffHours}h)`;
+            }
+            if (diffHours <= 48) {
+                return ` (Expira en ~${diffHours}h / Jueves)`;
+            }
+            const diffDays = Math.floor(diffHours / 24);
+            return ` (Expira en ${diffDays}d)`;
+        }
+        return '';
+    }
+
+    // Catálogo Base Canónico PERMANENTE (Fundaciones y Puzzles que NO expiran)
+    const DEFAULT_PERMANENT_SBC_CATALOG = [
+        // Intro to Upgrade SBCs (Fundaciones / Mejoras fijas permanentes)
+        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Room to Grow", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/13/room-to-grow", isPermanent: true },
+        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Build Up Play", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/14/build-up-play", isPermanent: true },
+        { group: "📦 Intro to Upgrade SBCs", title: "📦 Intro to Upgrade: Raw Power", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/15/raw-power", isPermanent: true },
+
+        // Híbrido de Ligas (Hybrid Leagues - 4 desafíos permanentes)
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Give Me Five", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/1/give-me-five", isPermanent: true },
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: Seven-League Boots", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/2/seven-league-boots", isPermanent: true },
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: The Whole Nine Yards", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/3/the-whole-nine-yards", isPermanent: true },
+        { group: "🧩 Híbrido de Ligas (Hybrid Leagues)", title: "🧩 Híbrido de Ligas: First XI", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/4/first-xi", isPermanent: true },
+
+        // Híbrido de Países (Hybrid Nations - 4 desafíos permanentes)
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: The Final Four", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/5/the-final-four", isPermanent: true },
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Six of the Best", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/6/six-of-the-best", isPermanent: true },
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Elite Eight", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/7/elite-eight", isPermanent: true },
+        { group: "🌍 Híbrido de Países (Hybrid Nations)", title: "🌍 Híbrido de Países: Around the World", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/8/around-the-world", isPermanent: true },
+
+        // League & Nation Advanced (Híbrido Liga y País - 4 desafíos permanentes)
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: The Challenger", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/9/the-challenger", isPermanent: true },
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Advanced", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/10/advanced", isPermanent: true },
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Fiendish", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/11/fiendish", isPermanent: true },
+        { group: "⚔️ League & Nation Advanced", title: "⚔️ League & Nation: Master Puzzle", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/12/master-puzzle", isPermanent: true }
     ];
 
-    const SCRIPT_CATALOG_VERSION = "1.15.3";
+    // Semillas de desafíos TEMPORALES iniciales (con fechas de expiración exactas)
+    const SEED_TEMPORARY_SBC_CATALOG = [
+        // Spooky Nights (expira en ~7 días: 3 de noviembre 2026 18:00 UTC)
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights", isPermanent: false, expiresAt: new Date("2026-11-03T18:00:00Z").getTime() },
+        // Scary Candy (expira en ~21 horas: 28 de octubre 2026 18:00 UTC)
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Scary Candy", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/113/scary-candy", isPermanent: false, expiresAt: new Date("2026-10-28T18:00:00Z").getTime() },
 
-    function getFutbinSbcCatalog() {
+        // Partidos de Marquesina actuales (cambian cada Jueves a las 18:00 UTC: 29 de octubre 2026)
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina (Grupo Completo / 4 Desafíos)", url: "https://www.futbin.com/27/squad-building-challenge/59", isPermanent: false, expiresAt: new Date("2026-10-29T18:00:00Z").getTime() },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 1: PSG v Olympique Lyonnais", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/96/psg-v-olympique-lyonnais", isPermanent: false, expiresAt: new Date("2026-10-29T18:00:00Z").getTime() },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 2: SSC Napoli v AS Roma", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/97/ssc-napoli-v-as-roma", isPermanent: false, expiresAt: new Date("2026-10-29T18:00:00Z").getTime() },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 3: Chelsea v Tottenham Hotspur", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/98/chelsea-v-tottenham-hotspur", isPermanent: false, expiresAt: new Date("2026-10-29T18:00:00Z").getTime() },
+        { group: "⚽ Partidos de Marquesina", title: "⚽ Marquesina 4: FC Barcelona v Real Madrid", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/99/fc-barcelona-v-real-madrid", isPermanent: false, expiresAt: new Date("2026-10-29T18:00:00Z").getTime() }
+    ];
+
+    const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
+    const SCRIPT_CATALOG_VERSION = "1.16.0";
+
+    function purgeExpiredSbcs(manual = true) {
+        const catalog = GM_getValue('futbin_sbc_catalog', []);
+        const now = Date.now();
+        const kept = [];
+        let purgedCount = 0;
+
+        for (const item of catalog) {
+            if (!item || !item.url) continue;
+            if (isSbcUrlDeleted(item.url)) continue;
+            if (item.expiresAt && typeof item.expiresAt === 'number' && now > item.expiresAt && !item.isPermanent) {
+                purgedCount++;
+                addDeletedSbcUrl(item.url);
+                continue;
+            }
+            kept.push(item);
+        }
+
+        GM_setValue('futbin_sbc_catalog', kept);
+        renderFutbinSbcSelectOptions();
+
+        if (State.futbinSbcData && State.futbinSbcData.expiresAt && now > State.futbinSbcData.expiresAt) {
+            State.futbinSbcData = null;
+            GM_setValue('futbin_sbc_data', null);
+            renderFutbinSbcTable();
+            updateFutbinTabBadge();
+        }
+
+        if (manual) {
+            if (purgedCount > 0) {
+                notificar(`🧹 Se purgaron ${purgedCount} desafíos SBC expirados de la lista.`, "#00ff88");
+            } else {
+                notificar("No se encontraron desafíos expirados en la lista.", "#00ccff");
+            }
+        }
+        return purgedCount;
+    }
+
+    function getFutbinSbcCatalog(autoPurge = true) {
         try {
+            const deletedUrls = getDeletedSbcUrls();
             const saved = GM_getValue('futbin_sbc_catalog', null);
+            const now = Date.now();
 
-            // 1. Empezar SIEMPRE con el catálogo oficial como base canónica asegurada
-            const catalog = DEFAULT_FUTBIN_SBC_CATALOG.map(item => Object.assign({}, item));
+            // 1. Empezar con el catálogo oficial permanente (que no esté en lista de borrados)
+            const catalog = DEFAULT_PERMANENT_SBC_CATALOG
+                .filter(item => !deletedUrls.includes(item.url.toLowerCase()))
+                .map(item => Object.assign({}, item));
 
-            // 2. Si hay entradas guardadas de sesiones anteriores, incorporar las personalizadas o detectadas
-            if (Array.isArray(saved) && saved.length > 0) {
+            // 2. Si no había guardado previo, incorporar las semillas temporales
+            if (saved === null) {
+                for (const seed of SEED_TEMPORARY_SBC_CATALOG) {
+                    const u = seed.url.toLowerCase();
+                    if (deletedUrls.includes(u)) continue;
+                    if (seed.expiresAt && now > seed.expiresAt) continue;
+                    catalog.push(Object.assign({}, seed));
+                }
+            } else if (Array.isArray(saved) && saved.length > 0) {
+                // Incorporar los desafíos guardados
                 for (const item of saved) {
                     if (!item || !item.url) continue;
                     const u = item.url.toLowerCase().split('?')[0].split('#')[0];
+                    if (deletedUrls.includes(u)) continue;
+
+                    // Auto-asignar tiempos de expiración a entradas conocidas si les faltaban
+                    if (!item.expiresAt && !item.isPermanent) {
+                        const titleLower = (item.title || '').toLowerCase();
+                        if (titleLower.includes('scary candy') || u.includes('/113/scary-candy')) {
+                            item.expiresAt = new Date("2026-10-28T18:00:00Z").getTime();
+                        } else if (titleLower.includes('spooky nights') || u.includes('/112/spooky-nights')) {
+                            item.expiresAt = new Date("2026-11-03T18:00:00Z").getTime();
+                        } else if (titleLower.includes('marquesina') || titleLower.includes('marquee') || u.includes('/59') || u.includes('/challenges/96') || u.includes('/challenges/97') || u.includes('/challenges/98') || u.includes('/challenges/99')) {
+                            item.expiresAt = new Date("2026-10-29T18:00:00Z").getTime();
+                        }
+                    }
+
+                    // Si ha expirado y autoPurge está activo, purgarlo
+                    if (autoPurge && item.expiresAt && typeof item.expiresAt === 'number' && now > item.expiresAt && !item.isPermanent) {
+                        addDeletedSbcUrl(item.url);
+                        continue;
+                    }
+
                     if (u.includes('/challenges/home') || u.endsWith('/home') ||
                         u.includes('/squad-building-challenge/ea/') ||
                         u.includes('/72/spooky') ||
-                        u.includes('/challenges/59') || u.includes('/challenges/60') ||
-                        u.endsWith('/60') ||
-                        u.endsWith('/challenges/98') || u.endsWith('/challenges/99') ||
                         u.endsWith('/squad-building-challenges') ||
                         u.endsWith('/squad-building-challenges/challenges') ||
                         u.endsWith('/squad-building-challenges/challenges/')) {
                         continue;
                     }
 
-                    // Verificar si ya existe en la base por URL o por título normalizado
                     const normTitle = (item.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                     const exists = catalog.some(c => 
                         c.url.toLowerCase() === u ||
@@ -1604,7 +1789,8 @@
             GM_setValue('futbin_sbc_catalog_version', SCRIPT_CATALOG_VERSION);
             return catalog;
         } catch (e) {
-            return DEFAULT_FUTBIN_SBC_CATALOG;
+            console.warn("[FC 27 Helper] Error obteniendo catálogo:", e);
+            return DEFAULT_PERMANENT_SBC_CATALOG;
         }
     }
 
@@ -1783,6 +1969,15 @@
 
             for (const s of sets) {
                 const sName = s.name || s.title || '';
+                let setExpiresAt = null;
+                if (typeof s.timeRemaining === 'number' && s.timeRemaining > 0) {
+                    setExpiresAt = Date.now() + (s.timeRemaining * 1000);
+                } else if (s.times && typeof s.times.remaining === 'number' && s.times.remaining > 0) {
+                    setExpiresAt = Date.now() + (s.times.remaining * 1000);
+                } else if (typeof s.endTime === 'number' && s.endTime > 0) {
+                    setExpiresAt = s.endTime > 10000000000 ? s.endTime : s.endTime * 1000;
+                }
+
                 const chs = (typeof s.getChallenges === 'function' ? s.getChallenges() : s.challenges) || [];
                 for (const ch of chs) {
                     const chName = ch.name || ch.title || '';
@@ -1802,7 +1997,8 @@
                         setName: sName,
                         challengeName: chName,
                         hasPackReward: hasPackReward,
-                        isCompleted: typeof ch.isCompleted === 'function' ? ch.isCompleted() : false
+                        isCompleted: typeof ch.isCompleted === 'function' ? ch.isCompleted() : false,
+                        expiresAt: setExpiresAt
                     });
                 }
             }
@@ -1814,7 +2010,7 @@
 
     async function fetchFutbinChallengesCatalogRemote() {
         return new Promise((resolve) => {
-            const catalog = getFutbinSbcCatalog();
+            const catalog = getFutbinSbcCatalog(true);
             if (typeof GM_xmlhttpRequest !== 'function') return resolve(catalog);
 
             GM_xmlhttpRequest({
@@ -1841,6 +2037,21 @@
                                 const pathLower = cleanUrl.toLowerCase();
 
                                 if (pathLower.endsWith('/squad-building-challenges') || pathLower.endsWith('/squad-building-challenges/')) continue;
+                                if (isSbcUrlDeleted(cleanUrl)) continue;
+
+                                const cardEl = a.closest('.sbc-challenge, .card, .challenge-box, tr, li') || a.parentElement || a;
+                                const cardText = ((cardEl ? cardEl.textContent : '') || '').toLowerCase();
+                                if (cardText.includes('expired') || cardText.includes('expirado')) continue;
+
+                                let expiresAt = null;
+                                const mExp = cardText.match(/expir(?:es|ed|ación)?\s*(?:in|en)?\s*(\d+)\s*(d|h|m|days?|hours?|días?|horas?)/i);
+                                if (mExp) {
+                                    const num = parseInt(mExp[1], 10);
+                                    const unit = mExp[2].toLowerCase();
+                                    if (unit.startsWith('d')) expiresAt = Date.now() + num * 86400000;
+                                    else if (unit.startsWith('h')) expiresAt = Date.now() + num * 3600000;
+                                    else if (unit.startsWith('m')) expiresAt = Date.now() + num * 60000;
+                                }
 
                                 const nameEl = a.querySelector('.challenge-name, .sbc-name, h4, h5, span') || a;
                                 let name = (nameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
@@ -1848,7 +2059,7 @@
                                 // Desafío individual con ID numérico en /Challenges/<id>
                                 if (/\/challenges\/\d+/i.test(pathLower)) {
                                     if (name && name.length >= 2 && !catalog.some(c => c.url.toLowerCase() === cleanUrl.toLowerCase())) {
-                                        catalog.push({ group: "📚 Desafíos Activos (FUTBIN)", title: name, url: cleanUrl });
+                                        catalog.push({ group: "📚 Desafíos Activos (FUTBIN)", title: name, url: cleanUrl, expiresAt: expiresAt, isPermanent: false });
                                         added++;
                                     }
                                 } else if (pathLower.includes('/challenges/') || pathLower.includes('/marquee') || pathLower.includes('/foundations')) {
@@ -1873,18 +2084,34 @@
                                                     const gTitleEl = gDoc.querySelector('h1, .challenge-name, .sbc-header-title');
                                                     const gTitle = gTitleEl ? gTitleEl.textContent.replace(/sbc/i, '').trim() : 'SBC Grupo';
 
+                                                    let gExpiresAt = null;
+                                                    const gExpEl = gDoc.querySelector('.time-left, .challenge-time, .expire-time, .countdown, [class*="expire"], [class*="time-left"]');
+                                                    const gDocText = ((gExpEl ? gExpEl.textContent : '') || gDoc.body.textContent || '').toLowerCase();
+                                                    const gmExp = gDocText.match(/expir(?:es|ed|ación)?\s*(?:in|en)?\s*(\d+)\s*(d|h|m|days?|hours?|días?|horas?)/i);
+                                                    if (gmExp) {
+                                                        const num = parseInt(gmExp[1], 10);
+                                                        const unit = gmExp[2].toLowerCase();
+                                                        if (unit.startsWith('d')) gExpiresAt = Date.now() + num * 86400000;
+                                                        else if (unit.startsWith('h')) gExpiresAt = Date.now() + num * 3600000;
+                                                        else if (unit.startsWith('m')) gExpiresAt = Date.now() + num * 60000;
+                                                    }
+
                                                     for (const ga of gAnchors) {
                                                         const gh = ga.getAttribute('href');
                                                         if (!gh) continue;
                                                         const gFull = gh.startsWith('http') ? gh : `https://www.futbin.com${gh.startsWith('/') ? '' : '/'}${gh}`;
                                                         const gClean = gFull.split('?')[0].split('#')[0];
+                                                        if (isSbcUrlDeleted(gClean)) continue;
+
                                                         const subNameEl = ga.querySelector('.challenge-name, .sbc-name, h4, h5, span') || ga;
                                                         let subName = (subNameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
                                                         if (subName && subName.length >= 2 && !catalog.some(c => c.url.toLowerCase() === gClean.toLowerCase())) {
                                                             catalog.push({
                                                                 group: gTitle,
                                                                 title: `${gTitle}: ${subName}`,
-                                                                url: gClean
+                                                                url: gClean,
+                                                                expiresAt: gExpiresAt,
+                                                                isPermanent: false
                                                             });
                                                             added++;
                                                         }
@@ -1904,6 +2131,9 @@
                                 for (const wch of webAppChallenges) {
                                     // Si no está ya en el catálogo, agregarlo con su slug tentativo
                                     const wSlug = wch.challengeName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                                    const tentativeUrl = `https://www.futbin.com/27/squad-building-challenges/Challenges/${wSlug}`;
+                                    if (isSbcUrlDeleted(tentativeUrl)) continue;
+
                                     const exists = catalog.some(c => {
                                         const cNorm = c.title.toLowerCase().replace(/[^a-z0-9]/g, '');
                                         const wNorm = wch.challengeName.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1914,7 +2144,9 @@
                                         catalog.push({
                                             group: `🎮 Web App: ${wch.setName}`,
                                             title: `${tag}${wch.setName}: ${wch.challengeName}`,
-                                            url: `https://www.futbin.com/27/squad-building-challenges/Challenges/${wSlug}`
+                                            url: tentativeUrl,
+                                            expiresAt: wch.expiresAt || null,
+                                            isPermanent: false
                                         });
                                         added++;
                                     }
@@ -1928,9 +2160,9 @@
                             }
                         } catch (e) { }
                     }
-                    resolve(getFutbinSbcCatalog());
+                    resolve(getFutbinSbcCatalog(true));
                 },
-                onerror: () => resolve(getFutbinSbcCatalog())
+                onerror: () => resolve(getFutbinSbcCatalog(true))
             });
         });
     }
@@ -1938,7 +2170,7 @@
     function renderFutbinSbcSelectOptions() {
         const select = document.getElementById('futbin-sbc-select');
         if (!select) return;
-        const catalog = getFutbinSbcCatalog();
+        const catalog = getFutbinSbcCatalog(true);
         const currentUrl = (State.futbinSbcData && State.futbinSbcData.challengeUrl) || (document.getElementById('futbin-sbc-url-input')?.value.trim()) || '';
 
         // Agrupar desafíos por optgroup
@@ -1957,12 +2189,20 @@
             for (const item of groups[grpName]) {
                 const isSelected = currentUrl && (currentUrl.toLowerCase() === item.url.toLowerCase() || (item.url.length > 25 && currentUrl.toLowerCase().includes(item.url.toLowerCase())));
                 if (isSelected) matched = true;
-                html += `<option value="${item.url}" ${isSelected ? 'selected' : ''}>${item.title}</option>`;
+                const expiryLabel = getSbcExpiryLabel(item);
+                const displayTitle = `${item.title}${expiryLabel}`;
+                html += `<option value="${item.url}" ${isSelected ? 'selected' : ''}>${displayTitle}</option>`;
             }
             html += `</optgroup>`;
         }
 
         html += `<option value="custom" ${!matched && currentUrl ? 'selected' : ''}>✍️ Otra URL / Personalizado...</option>`;
+        html += `<optgroup label="⚙️ Gestión de la Lista">`;
+        html += `<option value="__delete_selected__">🗑️ [Eliminar el SBC seleccionado de la lista]</option>`;
+        html += `<option value="__purge_expired__">⏳ [Purgar todos los SBCs expirados]</option>`;
+        html += `<option value="__clear_data__">🧹 [Limpiar jugadores cargados del SBC]</option>`;
+        html += `</optgroup>`;
+
         select.innerHTML = html;
 
         // Si hay una URL en State y el input está vacío, rellenarlo
@@ -3670,7 +3910,7 @@
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(res.responseText, 'text/html');
 
-                        // 1. Extraer título del desafío
+                        // 1. Extraer título y expiración del desafío
                         const titleEl = doc.querySelector('h1, .challenge-name, .sbc-header-title');
                         let challengeTitle = titleEl ? titleEl.textContent.replace(/sbc/i, '').trim() : '';
                         if (!challengeTitle) {
@@ -3678,6 +3918,22 @@
                             const m = docTitle.match(/CHALLENGES\s*-\s*([^|]+)/i) || docTitle.match(/([^|]+)\|\s*FUTBIN/i);
                             challengeTitle = (m && m[1].trim()) || 'SBC Challenge';
                         }
+
+                        let docExpiresAt = null;
+                        try {
+                            const expEl = doc.querySelector('.time-left, .challenge-time, .expire-time, .countdown, [class*="expire"], [class*="time-left"]');
+                            const docText = ((expEl ? expEl.textContent : '') || doc.body.textContent || '').toLowerCase();
+                            const mExp = docText.match(/expir(?:es|ed|ación)?\s*(?:in|en)?\s*(\d+)\s*(d|h|m|days?|hours?|días?|horas?)/i);
+                            if (mExp) {
+                                const num = parseInt(mExp[1], 10);
+                                const unit = mExp[2].toLowerCase();
+                                if (unit.startsWith('d')) docExpiresAt = Date.now() + num * 86400000;
+                                else if (unit.startsWith('h')) docExpiresAt = Date.now() + num * 3600000;
+                                else if (unit.startsWith('m')) docExpiresAt = Date.now() + num * 60000;
+                            } else if (docText.includes('challenge expired') || docText.includes('sbc expired')) {
+                                docExpiresAt = Date.now() - 1000;
+                            }
+                        } catch (e) { }
 
                         // 2. Extraer URLs de soluciones comunitarias
                         const allLinks = Array.from(doc.querySelectorAll('a[href*="/27/squad/"][href*="/sbc"], a[href*="/27/squad/"]'))
@@ -3704,13 +3960,17 @@
                                 if (!rawHref || !rawHref.includes('/Challenges/')) continue;
                                 const fullUrl = rawHref.startsWith('http') ? rawHref : `https://www.futbin.com${rawHref.startsWith('/') ? '' : '/'}${rawHref}`;
                                 const cleanUrl = fullUrl.split('?')[0].split('#')[0];
+                                if (isSbcUrlDeleted(cleanUrl)) continue;
+
                                 const nameEl = a.querySelector('.challenge-name, .sbc-name, h4, h5, span') || a;
                                 let name = (nameEl.textContent || '').trim().replace(/\s+/g, ' ').replace(/sbc/i, '').trim();
                                 if (name && cleanUrl && !foundSubChallenges.some(s => s.url.toLowerCase() === cleanUrl.toLowerCase())) {
                                     foundSubChallenges.push({
                                         group: `⚽ ${challengeTitle || 'Grupo SBC'}`,
                                         title: `⚽ ${name}`,
-                                        url: cleanUrl
+                                        url: cleanUrl,
+                                        expiresAt: docExpiresAt,
+                                        isPermanent: false
                                     });
                                 }
                             }
@@ -3718,12 +3978,15 @@
                             if (foundSubChallenges.length > 0) {
                                 console.log(`[FUTBIN Helper] 🌟 Se detectó página de grupo con ${foundSubChallenges.length} desafíos.`);
                                 try {
-                                    const catalog = getFutbinSbcCatalog();
+                                    const catalog = getFutbinSbcCatalog(false);
                                     for (const sub of foundSubChallenges) {
                                         const existingIdx = catalog.findIndex(c => c.url.toLowerCase() === sub.url.toLowerCase());
                                         if (existingIdx >= 0) {
                                             catalog[existingIdx].title = sub.title;
                                             catalog[existingIdx].group = sub.group;
+                                            if (docExpiresAt && !catalog[existingIdx].expiresAt) {
+                                                catalog[existingIdx].expiresAt = docExpiresAt;
+                                            }
                                         } else {
                                             catalog.push(sub);
                                         }
@@ -3828,6 +4091,7 @@
                             solutionCount: solutionCount,
                             totalSolutionsFound: solutionUrls.length,
                             syncedAt: new Date().toLocaleTimeString(),
+                            expiresAt: docExpiresAt,
                             players: aggregatedPlayers
                         };
 
@@ -3878,11 +4142,29 @@
                 renderBatchControls();
                 State.futbinSbcData = data;
                 persistFutbinState();
+
+                // Si se detectó expiración, actualizarla en el catálogo guardado
+                if (data.expiresAt) {
+                    try {
+                        const cat = getFutbinSbcCatalog(false);
+                        const matchCat = cat.find(c => c.url.toLowerCase() === cleanUrl.toLowerCase());
+                        if (matchCat && !matchCat.expiresAt) {
+                            matchCat.expiresAt = data.expiresAt;
+                            GM_setValue('futbin_sbc_catalog', cat);
+                        }
+                    } catch (e) { }
+                }
+
                 updateFutbinTabBadge();
                 matchFutbinPlayersWithKnownItems();
                 renderFutbinSbcTable();
                 renderFutbinSbcSelectOptions();
-                notificar(`🟢 ¡${data.players.length} jugadores cargados del SBC "${data.challengeTitle || 'SBC'}"!`, "#00ff88");
+
+                if (data.expiresAt && Date.now() > data.expiresAt) {
+                    notificar(`⚠️ El SBC "${data.challengeTitle || 'SBC'}" ya ha expirado en FUTBIN.`, "#ff4444");
+                } else {
+                    notificar(`🟢 ¡${data.players.length} jugadores cargados del SBC "${data.challengeTitle || 'SBC'}"!`, "#00ff88");
+                }
                 return;
             }
         } catch (eBg) {
@@ -5009,6 +5291,7 @@
                     <select id="futbin-sbc-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px; min-width:180px; max-width:240px; cursor:pointer;" title="Selecciona un desafío de FUTBIN">
                         <!-- Rellenado dinámicamente -->
                     </select>
+                    <button class="futgg-btn" id="futbin-sbc-delete-btn" style="padding:4px 7px; font-size:11px; color:#ef4444; border-color:#ef4444; font-weight:700;" title="Eliminar el SBC seleccionado de la lista y catálogo (no volverá a aparecer)">🗑️</button>
                     <button class="futgg-btn" id="futbin-sbc-detect-btn" style="padding:4px 8px; font-size:11px; color:#00ccff; border-color:#00ccff; font-weight:700;" title="Detectar automáticamente el SBC que tienes abierto en pantalla en la Web App">🎯 Detectar</button>
                     <span style="font-size:10px; font-weight:700; color:#8fa0b5;">Soluciones:</span>
                     <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
@@ -5019,7 +5302,9 @@
                     </select>
                     <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:4px 12px; font-size:11px; font-weight:700; white-space:nowrap;" title="Descargar y analizar soluciones comunitarias directamente desde este menú">⚡ Analizar SBC</button>
                     <button class="futgg-btn" id="futbin-sbc-open-web-btn" style="padding:4px 8px; font-size:11px;" title="Abrir página del desafío en FUTBIN en una nueva pestaña">🌐 Abrir Web</button>
-                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:4px 8px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN y Web App">🔄</button>
+                    <button class="futgg-btn" id="futbin-sbc-clear-data-btn" style="padding:4px 7px; font-size:11px; color:#cbd5e1;" title="Limpiar jugadores cargados en la tabla del SBC actual">🧹</button>
+                    <button class="futgg-btn" id="futbin-sbc-purge-expired-btn" style="padding:4px 7px; font-size:11px; color:#ffaa00; border-color:#ffaa00;" title="Purgar automáticamente todos los desafíos SBC expirados">⏳ Purgar</button>
+                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:4px 8px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN y Web App (Shift+Clic para restaurar de fábrica)">🔄</button>
                     <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:4px 8px; font-size:11px;" title="Restaurar último estado guardado del SBC">📥</button>
                 </div>
 
@@ -5128,10 +5413,29 @@
 
         // Controles de FUTBIN SBC
         const sbcSelect = document.getElementById('futbin-sbc-select');
+        const deleteSbcBtn = document.getElementById('futbin-sbc-delete-btn');
+        const clearDataBtn = document.getElementById('futbin-sbc-clear-data-btn');
+        const purgeExpiredBtn = document.getElementById('futbin-sbc-purge-expired-btn');
+
         if (sbcSelect) {
             sbcSelect.onchange = () => {
                 const val = sbcSelect.value;
                 const urlInput = document.getElementById('futbin-sbc-url-input');
+
+                // Acciones de gestión directa desde el dropdown
+                if (val === '__delete_selected__') {
+                    if (deleteSbcBtn) deleteSbcBtn.click();
+                    return;
+                }
+                if (val === '__purge_expired__') {
+                    if (purgeExpiredBtn) purgeExpiredBtn.click();
+                    return;
+                }
+                if (val === '__clear_data__') {
+                    if (clearDataBtn) clearDataBtn.click();
+                    return;
+                }
+
                 if (val === 'custom') {
                     if (urlInput) {
                         urlInput.focus();
@@ -5147,6 +5451,76 @@
             };
         }
 
+        if (deleteSbcBtn) {
+            deleteSbcBtn.onclick = () => {
+                const sel = document.getElementById('futbin-sbc-select');
+                const selectedUrl = (sel && sel.value && sel.value !== 'custom' && !sel.value.startsWith('__')) ? sel.value.trim() : '';
+                if (!selectedUrl) {
+                    notificar("⚠️ Elige un SBC de la lista para eliminarlo.", "#ffaa00");
+                    return;
+                }
+
+                const catalog = getFutbinSbcCatalog(false);
+                const idx = catalog.findIndex(c => c.url.toLowerCase() === selectedUrl.toLowerCase());
+                if (idx < 0) {
+                    notificar("⚠️ El SBC seleccionado no se encuentra en el catálogo.", "#ffaa00");
+                    return;
+                }
+
+                const item = catalog[idx];
+                const title = item.title || 'SBC';
+
+                if (item.isPermanent) {
+                    const ok = confirm(`"${title}" es un desafío permanente de Fundaciones.\n\n¿Estás seguro de que deseas eliminarlo de la lista?`);
+                    if (!ok) return;
+                }
+
+                // 1. Quitar del catálogo y persistir
+                catalog.splice(idx, 1);
+                GM_setValue('futbin_sbc_catalog', catalog);
+
+                // 2. Agregar a la lista negra permanente para que no vuelva a aparecer
+                addDeletedSbcUrl(item.url);
+
+                // 3. Si era el SBC activo en la tabla, limpiar datos
+                if (State.futbinSbcData && State.futbinSbcData.challengeUrl && State.futbinSbcData.challengeUrl.toLowerCase().includes(item.url.toLowerCase())) {
+                    State.futbinSbcData = null;
+                    GM_setValue('futbin_sbc_data', null);
+                    renderFutbinSbcTable();
+                    updateFutbinTabBadge();
+                }
+
+                const urlInput = document.getElementById('futbin-sbc-url-input');
+                if (urlInput && urlInput.value.toLowerCase().includes(item.url.toLowerCase())) {
+                    urlInput.value = '';
+                }
+
+                renderFutbinSbcSelectOptions();
+                notificar(`🗑️ SBC "${title}" eliminado de la lista.`, "#00ff88");
+            };
+        }
+
+        if (clearDataBtn) {
+            clearDataBtn.onclick = () => {
+                if (!State.futbinSbcData || !State.futbinSbcData.players || State.futbinSbcData.players.length === 0) {
+                    notificar("No hay datos de SBC cargados actualmente.", "#8fa0b5");
+                    return;
+                }
+                const title = State.futbinSbcData.challengeTitle || 'SBC';
+                State.futbinSbcData = null;
+                GM_setValue('futbin_sbc_data', null);
+                renderFutbinSbcTable();
+                updateFutbinTabBadge();
+                notificar(`🧹 Jugadores del SBC "${title}" limpiados de la tabla.`, "#00ff88");
+            };
+        }
+
+        if (purgeExpiredBtn) {
+            purgeExpiredBtn.onclick = () => {
+                purgeExpiredSbcs(true);
+            };
+        }
+
         const detectBtn = document.getElementById('futbin-sbc-detect-btn');
         if (detectBtn) {
             detectBtn.onclick = () => {
@@ -5157,7 +5531,7 @@
                 }
 
                 const dName = detected.name;
-                const catalog = getFutbinSbcCatalog();
+                const catalog = getFutbinSbcCatalog(true);
                 const norm = dName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
                 // 1. Buscar en el catálogo por título normalizado
@@ -5191,10 +5565,12 @@
                         return;
                     }
                     const tentativeUrl = `https://www.futbin.com/27/squad-building-challenges/Challenges/${slug}`;
+                    removeDeletedSbcUrl(tentativeUrl);
                     const newEntry = {
                         group: "🎯 Detectados de Web App",
                         title: `🎯 ${detected.setName ? detected.setName + ': ' : ''}${dName}`,
-                        url: tentativeUrl
+                        url: tentativeUrl,
+                        isPermanent: false
                     };
                     catalog.unshift(newEntry);
                     GM_setValue('futbin_sbc_catalog', catalog);
@@ -5221,16 +5597,26 @@
 
         const refreshCatalogBtn = document.getElementById('futbin-sbc-refresh-catalog-btn');
         if (refreshCatalogBtn) {
-            refreshCatalogBtn.onclick = async () => {
-                notificar("🔄 Restableciendo catálogo oficial y consultando nuevos desafíos...", "#00ccff");
-                GM_setValue('futbin_sbc_catalog', DEFAULT_FUTBIN_SBC_CATALOG);
+            refreshCatalogBtn.onclick = async (e) => {
+                if (e && e.shiftKey) {
+                    const confirmReset = confirm("¿Deseas restablecer TODO el catálogo oficial a valores de fábrica?\n\n(Esto también restaurará los SBCs que habías eliminado anteriormente).");
+                    if (confirmReset) {
+                        clearDeletedSbcUrls();
+                        GM_setValue('futbin_sbc_catalog', null);
+                        renderFutbinSbcSelectOptions();
+                        notificar("Catálogo restablecido de fábrica.", "#00ff88");
+                        return;
+                    }
+                }
+                notificar("🔄 Verificando expiraciones y consultando nuevos desafíos...", "#00ccff");
+                purgeExpiredSbcs(false);
                 renderFutbinSbcSelectOptions();
                 const list = await fetchFutbinChallengesCatalogRemote();
                 renderFutbinSbcSelectOptions();
                 if (list && list.length > 0) {
                     notificar(`🟢 ¡${list.length} desafíos SBC disponibles en el selector!`, "#00ff88");
                 } else {
-                    notificar("Catálogo restablecido con éxito.", "#00ff88");
+                    notificar("Catálogo actualizado con éxito.", "#00ff88");
                 }
             };
         }
@@ -6290,7 +6676,24 @@
             gemsCountEl.textContent = `SBC: ${displayedPlayers.length} cartas mostradas (de ${sbc.players.length} en ${sbc.solutionCount || 5} soluciones)`;
         }
 
+        const isCurrentExpired = sbc.expiresAt && typeof sbc.expiresAt === 'number' && Date.now() > sbc.expiresAt;
+        const expiryBadge = isCurrentExpired
+            ? `<span style="font-size:11px; background:#ef4444; color:#fff; padding:2px 8px; border-radius:4px; font-weight:800; letter-spacing:0.5px;">⚠️ SBC EXPIRADO</span>`
+            : (sbc.expiresAt ? `<span style="font-size:11px; color:#ffaa00; font-weight:600;">${getSbcExpiryLabel(sbc)}</span>` : '');
+
         let html = `
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#162232; padding:8px 12px; margin-bottom:10px; border-radius:8px; border:1px solid #23344a; flex-wrap:wrap; gap:8px;">
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <span style="font-size:15px;">🏆</span>
+                    <span style="font-size:13px; font-weight:800; color:#fff;">${sbc.challengeTitle || 'SBC'}</span>
+                    <span style="font-size:11px; color:#00ff88; font-weight:600;">(${sbc.solutionCount || 5} soluciones analizadas)</span>
+                    ${expiryBadge}
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <button class="futgg-btn" id="futbin-table-clear-btn" style="padding:4px 8px; font-size:11px; color:#cbd5e1;" title="Quitar este SBC de la tabla y dejarla vacía">🧹 Limpiar Tabla</button>
+                    <button class="futgg-btn" id="futbin-table-delete-btn" style="padding:4px 8px; font-size:11px; color:#ef4444; border-color:#ef4444;" title="Eliminar este desafío del catálogo para que no aparezca en la lista">🗑️ Borrar de la Lista</button>
+                </div>
+            </div>
             <table class="futgg-table">
                 <thead>
                     <tr>
@@ -6598,6 +7001,21 @@
 
         html += `</tbody></table>`;
         container.innerHTML = html;
+
+        const tblClearBtn = document.getElementById('futbin-table-clear-btn');
+        if (tblClearBtn) {
+            tblClearBtn.onclick = () => {
+                const clearBtn = document.getElementById('futbin-sbc-clear-data-btn');
+                if (clearBtn) clearBtn.click();
+            };
+        }
+        const tblDeleteBtn = document.getElementById('futbin-table-delete-btn');
+        if (tblDeleteBtn) {
+            tblDeleteBtn.onclick = () => {
+                const delBtn = document.getElementById('futbin-sbc-delete-btn');
+                if (delBtn) delBtn.click();
+            };
+        }
 
         // Mantener la posición exacta de scroll para continuar con la siguiente carta sin saltos
         if (scrollContainer) {
