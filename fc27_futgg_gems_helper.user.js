@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.16.1
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: Boo-Hoo Party (114), entrada directa de URL, purga de SBCs obsoletos y sincronización instantánea con Paletools.
+// @version      1.16.2
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: Boo-Hoo Party (114), reparación de botones Mover y Listar con resolución de entidad UTItemEntity en vivo y sincronización instantánea con Paletools.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1635,7 +1635,7 @@
     ];
 
     const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
-    const SCRIPT_CATALOG_VERSION = "1.16.1";
+    const SCRIPT_CATALOG_VERSION = "1.16.2";
 
     function purgeExpiredSbcs(manual = true) {
         const catalog = GM_getValue('futbin_sbc_catalog', []);
@@ -1762,9 +1762,22 @@
         }
     }
 
+    function isLiveEAItem(it) {
+        if (!it || typeof it !== 'object' || it.__serialized) return false;
+        return (
+            typeof it.getAuctionData === 'function' ||
+            typeof it.getPriceLimits === 'function' ||
+            typeof it.isUntradeable === 'function' ||
+            typeof it.getMaskedResourceId === 'function' ||
+            typeof it.isValid === 'function' ||
+            Boolean(it._staticData)
+        );
+    }
+
     function serializeItemForStorage(it) {
         if (!it) return null;
         return {
+            __serialized: true,
             id: it.id,
             resourceId: it.resourceId || it.definitionId,
             definitionId: it.definitionId || it.resourceId,
@@ -1844,15 +1857,33 @@
             }
             const savedMatches = GM_getValue('futbin_sbc_club_matches', null);
             if (savedMatches && typeof savedMatches === 'object') {
-                State.clubMatches = Object.assign(State.clubMatches || {}, savedMatches);
+                State.clubMatches = State.clubMatches || {};
+                for (const [k, v] of Object.entries(savedMatches)) {
+                    if (v && !isLiveEAItem(State.clubMatches[k])) {
+                        v.__serialized = true;
+                        State.clubMatches[k] = v;
+                    }
+                }
             }
             const savedTransfer = GM_getValue('futbin_sbc_transfer_matches', null);
             if (savedTransfer && typeof savedTransfer === 'object') {
-                State.transferMatches = Object.assign(State.transferMatches || {}, savedTransfer);
+                State.transferMatches = State.transferMatches || {};
+                for (const [k, v] of Object.entries(savedTransfer)) {
+                    if (v && !isLiveEAItem(State.transferMatches[k])) {
+                        v.__serialized = true;
+                        State.transferMatches[k] = v;
+                    }
+                }
             }
             const savedSelling = GM_getValue('futbin_sbc_selling_matches', null);
             if (savedSelling && typeof savedSelling === 'object') {
-                State.sellingMatches = Object.assign(State.sellingMatches || {}, savedSelling);
+                State.sellingMatches = State.sellingMatches || {};
+                for (const [k, v] of Object.entries(savedSelling)) {
+                    if (v && (!State.sellingMatches[k] || !isLiveEAItem(State.sellingMatches[k].item))) {
+                        if (v.item) v.item.__serialized = true;
+                        State.sellingMatches[k] = v;
+                    }
+                }
             }
         } catch (e) {
             console.warn("[FC 27 Helper] Error restaurando estado:", e);
@@ -2133,24 +2164,91 @@
 
         console.log(`%c[FUT.GG Helper] 🔎 Verificando a ${name} (eaId: ${eaId}) en tu cuenta...`, "color:#00ff88; font-weight:bold;");
 
-        // 1. Si ya se detectó en transferibles o en venta activa
-        if (State.sellingMatches[eaId]) return State.sellingMatches[eaId].item;
-        if (State.transferMatches[eaId]) return State.transferMatches[eaId];
+        // 1. Si ya tenemos la entidad UTItemEntity viva en RAM de EA
+        if (State.sellingMatches[eaId] && isLiveEAItem(State.sellingMatches[eaId].item)) {
+            return State.sellingMatches[eaId].item;
+        }
+        if (isLiveEAItem(State.transferMatches[eaId])) {
+            return State.transferMatches[eaId];
+        }
+        if (isLiveEAItem(State.clubMatches[eaId])) {
+            return State.clubMatches[eaId];
+        }
         if (State.soldMatches[eaId]) return null; // Ya vendido, no buscar en el club
 
-        // 2. Búsqueda directa en Club vía services.Club.search (consulta en vivo al servidor de EA, inmune a RAM obsoleta)
+        // 2. Comprobar primero en el Club Index de Paletools en RAM (0ms, devuelve UTItemEntity real)
+        try {
+            if (typeof win.clubIndexDebug === 'function') {
+                const ptDebug = win.clubIndexDebug();
+                if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
+                    const ptMatches = ptDebug.players.filter(it => matchesCard(it, eaId, name));
+                    if (ptMatches.length > 0) {
+                        const tradeable = ptMatches.find(it => isItemTradeable(it));
+                        const selected = tradeable || ptMatches[0];
+                        if (isLiveEAItem(selected)) {
+                            selected._isTradeable = isItemTradeable(selected);
+                            State.clubMatches[eaId] = selected;
+                            console.log(`[FUT.GG Helper] ⚡ Entidad UTItemEntity obtenida de Paletools RAM:`, selected);
+                            return selected;
+                        }
+                    }
+                }
+            }
+        } catch (ePt) { }
+
+        // 3. Verificar en la Lista de Transferibles en vivo (por si estaba en transferibles o restaurada de disco)
+        try {
+            let transferItems = [];
+            if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
+                const tl = win.repositories.Item.getTransferList();
+                transferItems = tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []);
+            }
+            if ((!transferItems || transferItems.length === 0) && win.services && win.services.Item && typeof win.services.Item.requestTransferItems === 'function') {
+                const res = await callEAService(win.services.Item.requestTransferItems());
+                transferItems = extractItemsFromEaResponse(res);
+            }
+            if (transferItems && transferItems.length > 0) {
+                const trMatches = transferItems.filter(it => matchesCard(it, eaId, name));
+                for (const it of trMatches) {
+                    const auction = (typeof it.getAuctionData === 'function' ? it.getAuctionData() : null) || it._auction;
+                    const tradeState = (auction && (auction.tradeState || auction._tradeState)) || '';
+                    if (tradeState !== 'closed' && tradeState !== 'sold' && tradeState !== 'active') {
+                        it._isTradeable = true;
+                        State.transferMatches[eaId] = it;
+                        delete State.clubMatches[eaId];
+                        console.log(`[FUT.GG Helper] 📋 Entidad UTItemEntity encontrada en Lista de Transferibles:`, it);
+                        return it;
+                    }
+                }
+            }
+        } catch (eTr) { }
+
+        // 4. Búsqueda directa en Club vía services.Club.search con defId = [eaId] (consulta en vivo al servidor de EA)
         try {
             if (win.services && win.services.Club && typeof win.services.Club.search === 'function') {
-                const criteria = createSearchCriteria(eaId);
+                const criteria = createSearchCriteria();
                 criteria.count = 20;
                 criteria.offset = 0;
                 criteria.type = 'player';
-                criteria.maskedDefId = eaId;
-                criteria.defId = [];
+                criteria.defId = [eaId];
+                criteria.maskedDefId = 0;
 
-                const res = await callEAService(win.services.Club.search(criteria));
-                const items = extractItemsFromEaResponse(res);
-                const matches = items.filter(it => matchesCard(it, eaId, name));
+                let res = await callEAService(win.services.Club.search(criteria));
+                let items = extractItemsFromEaResponse(res);
+                let matches = items.filter(it => matchesCard(it, eaId, name));
+
+                // Fallback con maskedDefId si defId = [eaId] no devolvió resultados
+                if (matches.length === 0) {
+                    const altCriteria = createSearchCriteria(eaId);
+                    altCriteria.count = 20;
+                    altCriteria.offset = 0;
+                    altCriteria.type = 'player';
+                    altCriteria.maskedDefId = eaId;
+                    altCriteria.defId = [eaId];
+                    res = await callEAService(win.services.Club.search(altCriteria));
+                    items = extractItemsFromEaResponse(res);
+                    matches = items.filter(it => matchesCard(it, eaId, name));
+                }
 
                 if (matches.length > 0) {
                     const tradeable = matches.find(it => isItemTradeable(it));
@@ -2165,12 +2263,15 @@
             console.warn(`[FUT.GG Helper] Fallo en services.Club.search específico:`, e);
         }
 
-        // 3. Depósito de Almacenamiento (Storage de Duplicados en FC 25/27)
+        // 5. Depósito de Almacenamiento (Storage de Duplicados en FC 25/27)
         try {
             if (win.services && win.services.Item && typeof win.services.Item.searchStorageItems === 'function') {
                 const storageCrit = createSearchCriteria();
                 storageCrit.count = 30;
                 storageCrit.offset = 0;
+                storageCrit.type = 'player';
+                storageCrit.defId = [eaId];
+                storageCrit.maskedDefId = 0;
                 const res = await callEAService(win.services.Item.searchStorageItems(storageCrit));
                 const items = extractItemsFromEaResponse(res);
                 for (const it of items) {
@@ -2439,9 +2540,9 @@
         const win = getAppWindow();
         const eaId = Number(gem.eaId);
 
-        // 1. Si tenemos la carta en el club o transferibles, usar comparePrice de EA si está disponible
+        // 1. Si tenemos la carta viva en el club o transferibles, usar comparePrice de EA si está disponible
         const item = State.transferMatches[eaId] || State.clubMatches[eaId];
-        if (item && win.UTItemActionUtility && typeof win.UTItemActionUtility.comparePrice === 'function') {
+        if (isLiveEAItem(item) && win.UTItemActionUtility && typeof win.UTItemActionUtility.comparePrice === 'function') {
             notificar(`Abriendo comparación de mercado para ${gem.name}...`, "#00ccff");
             try {
                 win.UTItemActionUtility.comparePrice(item);
@@ -2903,15 +3004,23 @@
             return false;
         }
 
-        // 3. Si ya está registrada en transferibles
-        if (State.transferMatches[eaId]) {
+        // 3. Si ya está registrada en transferibles como entidad viva en RAM
+        if (isLiveEAItem(State.transferMatches[eaId])) {
             if (!silent) notificar(`📋 ${gem.name} ya está en la Lista de Transferibles`, "#00ccff");
             return true;
         }
 
         let item = State.clubMatches[eaId];
-        if (!item || !item.id) {
+        if (!isLiveEAItem(item)) {
+            if (!silent) notificar(`🔍 Localizando carta de ${gem.name} en tu cuenta...`, "#00ccff");
             item = await findCardInAccount(gem);
+        }
+
+        // Si findCardInAccount la encontró directamente en la Lista de Transferibles
+        if (isLiveEAItem(State.transferMatches[eaId])) {
+            renderCurrentTable();
+            if (!silent) notificar(`📋 ${gem.name} ya está en la Lista de Transferibles`, "#00ccff");
+            return true;
         }
 
         if (!item) {
@@ -3035,7 +3144,7 @@
         }
 
         let item = State.transferMatches[eaId] || State.clubMatches[eaId];
-        if (!item) {
+        if (!isLiveEAItem(item)) {
             notificar(`🔍 Buscando ${gem.name} en tu cuenta antes de listar...`, "#00ccff");
             item = await findCardInAccount(gem);
         }
@@ -3051,19 +3160,18 @@
         }
 
         // Si la carta está en el Club o en Almacenamiento, asegurar movimiento previo a Transferibles
-        // En EA FC Web App, listar directamente desde Club/Storage frecuentemente falla con "Destination full" o "Error en servicio de EA"
         const transferPile = (win.enums && win.enums.FUTItemPile && win.enums.FUTItemPile.TRANSFER) ||
             (win.enums && win.enums.ItemPile && win.enums.ItemPile.TRANSFER) || 2;
         const currentPile = item.pile || item._pile || (typeof item.getPile === 'function' ? item.getPile() : 0);
 
-        if (currentPile !== transferPile && !State.transferMatches[eaId]) {
-            console.log(`[FC 27 Helper] 📋 ${gem.name} está en el Club (pile ${currentPile}). Moviendo primero a Transferibles para listar con seguridad...`);
-            const moved = await moveToTransferList(gem, true);
-            if (!moved) {
-                // Si no se pudo mover (ej. lista llena o en plantilla activa), la función moveToTransferList ya notificó la razón exacta
+        if (currentPile !== transferPile && !isLiveEAItem(State.transferMatches[eaId])) {
+            console.log(`[FC 27 Helper] 📋 ${gem.name} está en el Club (pile ${currentPile}). Moviendo primero a Transferibles para listar...`);
+            const moved = await moveToTransferList(gem, false);
+            if (moved && isLiveEAItem(State.transferMatches[eaId])) {
+                item = State.transferMatches[eaId];
+            } else if (!moved) {
                 return;
             }
-            item = State.transferMatches[eaId] || item;
         }
 
         // Consultar límites oficiales de precio en tiempo real a EA si están disponibles
@@ -3388,11 +3496,17 @@
         // 1. Cargar transferibles si están disponibles en RAM de EA
         if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
             try {
-                const trItems = win.repositories.Item.getTransferList();
+                const tl = win.repositories.Item.getTransferList();
+                const trItems = tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []);
                 if (trItems && trItems.length) {
-                    for (const it of trItems) {
-                        const itDefId = it.defId || it.resourceId;
-                        if (itDefId) State.transferMatches[Number(itDefId)] = it;
+                    for (const p of State.futbinSbcData.players) {
+                        const eaId = Number(p.eaId);
+                        if (eaId <= 0) continue;
+                        const match = trItems.find(it => matchesCard(it, eaId, p.name));
+                        if (match) {
+                            State.transferMatches[eaId] = match;
+                            delete State.clubMatches[eaId];
+                        }
                     }
                 }
             } catch (e) { }
@@ -3405,9 +3519,11 @@
                 if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
                     for (const p of State.futbinSbcData.players) {
                         const eaId = Number(p.eaId);
-                        if (eaId > 0 && !State.clubMatches[eaId] && !State.transferMatches[eaId] && !State.sellingMatches[eaId]) {
-                            const match = ptDebug.players.find(it => matchesCard(it, eaId, p.name));
-                            if (match) {
+                        if (eaId > 0 && !isLiveEAItem(State.clubMatches[eaId]) && !isLiveEAItem(State.transferMatches[eaId]) && !State.sellingMatches[eaId]) {
+                            const matches = ptDebug.players.filter(it => matchesCard(it, eaId, p.name));
+                            if (matches.length > 0) {
+                                const tradeable = matches.find(it => isItemTradeable(it));
+                                const match = tradeable || matches[0];
                                 match._isTradeable = isItemTradeable(match);
                                 State.clubMatches[eaId] = match;
                             }
