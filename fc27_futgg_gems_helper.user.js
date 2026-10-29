@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.17.0
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: botón para añadir Grupos de SBC (recuperando sus desafíos internos automáticamente) o SBCs únicos, Boo-Hoo Party y sincronización con Paletools.
+// @version      1.17.1
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: barra compacta en 2 líneas, agrupación limpia de SBCs (Marquee Matchups 1-4 sin duplicados) y sincronización con Paletools.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -593,12 +593,14 @@
                 rawName: name,
                 url: cleanUrl,
                 expiresAt: docExpiresAt,
-                isPermanent: false
+                isPermanent: false,
+                fromGroup: true
             });
         }
 
         foundSubChallenges.forEach((sub, idx) => {
             sub.title = `⚽ ${idx + 1}. ${sub.rawName}`;
+            sub.groupOrder = idx + 1;
         });
 
         return foundSubChallenges;
@@ -616,15 +618,32 @@
             let catalog = GM_getValue('futbin_sbc_catalog', []);
             if (!Array.isArray(catalog)) catalog = [];
 
-            // Filtrar duplicados existentes de las URLs que vamos a insertar arriba del todo
-            catalog = catalog.filter(c => {
-                if (!c || !c.url) return false;
-                const cu = normalizeFutbinSbcUrl(c.url).toLowerCase();
-                return !urlsToRestore.includes(cu);
-            });
+            const toUnshift = [];
 
-            const cleanEntries = entriesToAdd.map(e => Object.assign({}, e, { url: normalizeFutbinSbcUrl(e.url) }));
-            catalog.unshift(...cleanEntries);
+            for (const rawEntry of entriesToAdd) {
+                if (!rawEntry || !rawEntry.url) continue;
+                const normUrl = normalizeFutbinSbcUrl(rawEntry.url);
+                const lowerUrl = normUrl.toLowerCase();
+                const existingIdx = catalog.findIndex(c => c && c.url && normalizeFutbinSbcUrl(c.url).toLowerCase() === lowerUrl);
+
+                if (existingIdx >= 0 && !rawEntry.fromGroup) {
+                    // Si el SBC ya existe (por ejemplo, pertenece a un grupo como Marquee Matchups), NO sobrescribir su grupo ni moverlo fuera del grupo
+                    if (rawEntry.expiresAt && !catalog[existingIdx].expiresAt) {
+                        catalog[existingIdx].expiresAt = rawEntry.expiresAt;
+                    }
+                    continue;
+                }
+
+                if (existingIdx >= 0) {
+                    catalog.splice(existingIdx, 1);
+                }
+
+                toUnshift.push(Object.assign({}, rawEntry, { url: normUrl }));
+            }
+
+            if (toUnshift.length > 0) {
+                catalog.unshift(...toUnshift);
+            }
             GM_setValue('futbin_sbc_catalog', catalog);
         } catch (e) {
             console.warn("[FC 27 Helper] Error en upsertSbcCatalogEntries:", e);
@@ -1077,16 +1096,7 @@
                         const subChallenges = extractSubChallengesFromDoc(document, challengeTitle, docExpiresAt);
                         if (subChallenges.length > 0) {
                             console.log(`[FC 27 Helper] 🌟 Grupo SBC detectado en FUTBIN con ${subChallenges.length} desafíos internos:`, subChallenges);
-                            const groupEntry = {
-                                group: `🧩 ${challengeTitle}`,
-                                title: `📦 ${challengeTitle} (Grupo Completo / ${subChallenges.length} SBCs)`,
-                                url: currentCleanUrl,
-                                isGroup: true,
-                                subChallengeUrls: subChallenges.map(s => s.url),
-                                expiresAt: docExpiresAt,
-                                isPermanent: false
-                            };
-                            upsertSbcCatalogEntries([groupEntry, ...subChallenges]);
+                            upsertSbcCatalogEntries(subChallenges);
 
                             const subStatus = document.getElementById('futbin-sbc-substatus') || progressEl;
                             const parser = new DOMParser();
@@ -1808,7 +1818,7 @@
     ];
 
     const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
-    const SCRIPT_CATALOG_VERSION = "1.17.0";
+    const SCRIPT_CATALOG_VERSION = "1.17.1";
 
     function purgeExpiredSbcs(manual = true) {
         const catalog = GM_getValue('futbin_sbc_catalog', []);
@@ -1872,8 +1882,9 @@
 
                     if (deletedUrls.includes(u)) continue;
 
-                    // Purgar entradas basura ("Challenger", "Scary Candy" ya expirado, Marquesinas del 29 oct expiradas, o falsos detectados)
-                    if (titleLower.includes('challenger') || u.includes('challenger') ||
+                    // Purgar entradas basura ("Challenger", "Scary Candy" ya expirado, cabeceras "Grupo Completo", Marquesinas del 29 oct expiradas, o falsos detectados)
+                    if (item.isGroup || titleLower.includes('grupo completo') ||
+                        titleLower.includes('challenger') || u.includes('challenger') ||
                         titleLower.includes('scary candy') || u.includes('/113/scary-candy') ||
                         u.endsWith('/squad-building-challenge/59') || u.endsWith('/squad-building-challenges/59') ||
                         u.includes('/challenges/96/') || u.includes('/challenges/97/') || u.includes('/challenges/98/') || u.includes('/challenges/99/') ||
@@ -1884,6 +1895,13 @@
                         u.endsWith('/squad-building-challenges/challenges') ||
                         u.endsWith('/squad-building-challenges/challenges/')) {
                         continue;
+                    }
+
+                    // Auto-reparar si el 1er partido de Marquesinas (ej. Villarreal CF v RCD Espanyol) quedó suelto en Eventos y Puzzles
+                    if (titleLower.includes('villarreal') && titleLower.includes('espanyol')) {
+                        item.group = "🧩 Marquee Matchups";
+                        item.title = "⚽ 1. Villarreal CF v RCD Espanyol";
+                        item.groupOrder = 1;
                     }
 
                     // Descartar URLs de /Challenges/ que no tengan ID numérico real de FUTBIN
@@ -2148,12 +2166,20 @@
         const catalog = getFutbinSbcCatalog(true);
         const currentUrl = (State.futbinSbcData && State.futbinSbcData.challengeUrl) || (document.getElementById('futbin-sbc-url-input')?.value.trim()) || '';
 
-        // Agrupar desafíos por optgroup
+        // Agrupar desafíos por optgroup y ordenar sub-desafíos numerados (1., 2., 3., 4.)
         const groups = {};
         for (const item of catalog) {
             const grp = item.group || "📚 Otros Desafíos";
             if (!groups[grp]) groups[grp] = [];
             groups[grp].push(item);
+        }
+        for (const grpName of Object.keys(groups)) {
+            groups[grpName].sort((a, b) => {
+                const mA = (a.title || '').match(/(\d+)\./);
+                const mB = (b.title || '').match(/(\d+)\./);
+                if (mA && mB) return parseInt(mA[1], 10) - parseInt(mB[1], 10);
+                return 0;
+            });
         }
 
         let html = `<option value="">-- Elige un SBC de la lista --</option>`;
@@ -4018,70 +4044,17 @@
 
                             if (foundSubChallenges.length > 0) {
                                 console.log(`[FUTBIN Helper] 🌟 Se detectó página de grupo "${challengeTitle}" con ${foundSubChallenges.length} desafíos.`);
-                                const groupEntry = {
-                                    group: `🧩 ${challengeTitle || 'Grupo SBC'}`,
-                                    title: `📦 ${challengeTitle || 'Grupo SBC'} (Grupo Completo / ${foundSubChallenges.length} SBCs)`,
-                                    url: challengeUrl,
-                                    isGroup: true,
-                                    subChallengeUrls: foundSubChallenges.map(s => s.url),
-                                    expiresAt: docExpiresAt,
-                                    isPermanent: false
-                                };
-                                upsertSbcCatalogEntries([groupEntry, ...foundSubChallenges]);
+                                upsertSbcCatalogEntries(foundSubChallenges);
                                 renderFutbinSbcSelectOptions();
 
+                                const firstSubUrl = foundSubChallenges[0].url;
                                 const sel = document.getElementById('futbin-sbc-select');
                                 const urlInput = document.getElementById('futbin-sbc-url-input');
-                                if (sel) sel.value = challengeUrl;
-                                if (urlInput) urlInput.value = challengeUrl;
+                                if (sel) sel.value = firstSubUrl;
+                                if (urlInput) urlInput.value = firstSubUrl;
 
-                                notificar(`✅ Grupo "${challengeTitle}" añadido con sus ${foundSubChallenges.length} SBCs internos. Descargando soluciones...`, "#00ff88");
-
-                                // Recopilar URLs de soluciones de TODOS los sub-desafíos del grupo
-                                const perSubCount = Math.max(1, Math.min(solutionCount, 3));
-                                const groupSolUrls = [];
-
-                                for (let sIdx = 0; sIdx < foundSubChallenges.length; sIdx++) {
-                                    const sub = foundSubChallenges[sIdx];
-                                    updateBatchStatus(`Grupo (${sIdx + 1}/${foundSubChallenges.length}): Buscando soluciones de ${sub.rawName}...`);
-                                    const subRes = await new Promise(r => {
-                                        GM_xmlhttpRequest({
-                                            method: 'GET',
-                                            url: sub.url,
-                                            headers: {
-                                                'User-Agent': navigator.userAgent,
-                                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                                            },
-                                            onload: r,
-                                            onerror: () => r(null)
-                                        });
-                                    });
-
-                                    if (subRes && subRes.status === 200 && subRes.responseText) {
-                                        const subDoc = parser.parseFromString(subRes.responseText, 'text/html');
-                                        const sLinks = Array.from(subDoc.querySelectorAll('a[href*="/27/squad/"][href*="/sbc"], a[href*="/27/squad/"]'))
-                                            .map(a => a.getAttribute('href') || a.href)
-                                            .filter(href => href && /\/27\/squad\/\d+/.test(href));
-                                        let addedForSub = 0;
-                                        for (const raw of sLinks) {
-                                            const full = raw.startsWith('http') ? raw : `https://www.futbin.com${raw.startsWith('/') ? '' : '/'}${raw}`;
-                                            const clean = full.split('?')[0].split('#')[0];
-                                            const sbcUrl = clean.endsWith('/sbc') ? clean : clean + '/sbc';
-                                            if (!groupSolUrls.includes(sbcUrl)) {
-                                                groupSolUrls.push(sbcUrl);
-                                                addedForSub++;
-                                                if (addedForSub >= perSubCount) break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (groupSolUrls.length > 0) {
-                                    solutionUrls = groupSolUrls;
-                                } else {
-                                    // Si las soluciones requieren el puente de pestaña, ya quedaron guardados todos los SBCs del grupo en el selector
-                                    return reject(new Error("Soluciones de grupo requieren puente de pestaña"));
-                                }
+                                notificar(`✅ Grupo "${challengeTitle}" añadido (${foundSubChallenges.length} SBCs). Analizando el 1°: ${foundSubChallenges[0].rawName}...`, "#00ff88");
+                                return resolve(await fetchFutbinSbcBackground(firstSubUrl, solutionCount));
                             } else {
                                 return reject(new Error("No se encontraron soluciones de plantilla en el HTML de FUTBIN"));
                             }
@@ -5378,57 +5351,58 @@
                 </div>
             </div>
 
-            <!-- Toolbar para Soluciones SBC de FUTBIN -->
-            <div id="futbin-sbc-toolbar" class="futgg-toolbar" style="display:none; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center;">
-                <!-- Selección y Análisis Directo de Desafío SBC -->
-                <div style="display:flex; align-items:center; gap:6px; background:#162232; padding:4px 8px; border-radius:8px; border:1px solid #23344a; flex-wrap:wrap;">
-                    <span style="font-size:10px; font-weight:800; color:#00ff88; text-transform:uppercase;">🏆 Desafío:</span>
-                    <select id="futbin-sbc-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px; min-width:180px; max-width:240px; cursor:pointer;" title="Selecciona un desafío de FUTBIN">
-                        <!-- Rellenado dinámicamente -->
-                    </select>
-                    <button class="futgg-btn" id="futbin-sbc-delete-btn" style="padding:4px 7px; font-size:11px; color:#ef4444; border-color:#ef4444; font-weight:700;" title="Eliminar el SBC seleccionado de la lista y catálogo (no volverá a aparecer)">🗑️</button>
-                    <span style="font-size:10px; font-weight:700; color:#8fa0b5;">Soluciones:</span>
-                    <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
-                        <option value="1">Top 1</option>
-                        <option value="3">Top 3</option>
-                        <option value="5" selected>Top 5 (Recomendado)</option>
-                        <option value="10">Top 10</option>
-                    </select>
-                    <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:4px 12px; font-size:11px; font-weight:700; white-space:nowrap;" title="Descargar y analizar soluciones comunitarias directamente desde este menú">⚡ Analizar SBC</button>
-                    <button class="futgg-btn" id="futbin-sbc-open-web-btn" style="padding:4px 8px; font-size:11px;" title="Abrir página del desafío en FUTBIN en una nueva pestaña">🌐 Abrir Web</button>
-                    <button class="futgg-btn" id="futbin-sbc-clear-data-btn" style="padding:4px 7px; font-size:11px; color:#cbd5e1;" title="Limpiar jugadores cargados en la tabla del SBC actual">🧹</button>
-                    <button class="futgg-btn" id="futbin-sbc-purge-expired-btn" style="padding:4px 7px; font-size:11px; color:#ffaa00; border-color:#ffaa00;" title="Purgar automáticamente todos los desafíos SBC expirados">⏳ Purgar</button>
-                    <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:4px 8px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN y Web App (Shift+Clic para restaurar de fábrica)">🔄</button>
-                    <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:4px 8px; font-size:11px;" title="Restaurar último estado guardado del SBC">📥</button>
+            <!-- Toolbar para Soluciones SBC de FUTBIN (Compacta en exactamente 2 líneas) -->
+            <div id="futbin-sbc-toolbar" class="futgg-toolbar" style="display:none; flex-direction:column; gap:6px; align-items:stretch;">
+                <!-- Línea 1: Selección de SBC, Análisis y Añadir URL / Grupo -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%; flex-wrap:nowrap;">
+                    <div style="display:flex; align-items:center; gap:5px; background:#162232; padding:3px 7px; border-radius:8px; border:1px solid #23344a; flex-wrap:nowrap;">
+                        <span style="font-size:10px; font-weight:800; color:#00ff88; text-transform:uppercase; white-space:nowrap;">🏆 SBC:</span>
+                        <select id="futbin-sbc-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:3px 6px; border-radius:6px; font-size:11px; width:215px; cursor:pointer;" title="Selecciona un desafío de FUTBIN">
+                            <!-- Rellenado dinámicamente -->
+                        </select>
+                        <button class="futgg-btn" id="futbin-sbc-delete-btn" style="padding:3px 6px; font-size:11px; color:#ef4444; border-color:#ef4444; font-weight:700;" title="Eliminar el SBC seleccionado de la lista y catálogo (no volverá a aparecer)">🗑️</button>
+                        <select id="futbin-sbc-sol-count-select" style="background:#101924; border:1px solid #2e4157; color:#fff; padding:3px 5px; border-radius:6px; font-size:11px; cursor:pointer;" title="Cantidad de soluciones comunitarias más baratas a analizar">
+                            <option value="1">Top 1</option>
+                            <option value="3">Top 3</option>
+                            <option value="5" selected>Top 5 ★</option>
+                            <option value="10">Top 10</option>
+                        </select>
+                        <button class="futgg-btn primary" id="futbin-sbc-fetch-btn" style="padding:3px 10px; font-size:11px; font-weight:700; white-space:nowrap;" title="Descargar y analizar soluciones comunitarias directamente desde este menú">⚡ Analizar</button>
+                        <button class="futgg-btn" id="futbin-sbc-open-web-btn" style="padding:3px 7px; font-size:11px; white-space:nowrap;" title="Abrir página del desafío en FUTBIN en una nueva pestaña">🌐 Web</button>
+                    </div>
+
+                    <div style="display:flex; align-items:center; gap:5px; background:#162232; padding:3px 7px; border-radius:8px; border:1px solid #23344a; flex:1; justify-content:flex-end; flex-wrap:nowrap;">
+                        <input type="text" id="futbin-sbc-url-input" placeholder="Pega URL de Grupo o SBC..." style="flex:1; min-width:130px; max-width:210px; background:#101924; border:1px solid #2e4157; color:#fff; padding:3px 7px; border-radius:6px; font-size:11px;" title="Pega la URL de un Grupo de SBCs (ej. Marquesinas) o de un SBC único de FUTBIN" />
+                        <button class="futgg-btn" id="futbin-sbc-add-btn" style="padding:3px 8px; font-size:11px; font-weight:700; border-color:#00ff88; color:#00ff88; white-space:nowrap;" title="Añadir un Grupo de SBCs (recuperando automáticamente los SBCs de adentro) o un SBC único">➕ Añadir SBC / Grupo</button>
+                        <button class="futgg-btn" id="futbin-sbc-purge-expired-btn" style="padding:3px 6px; font-size:11px; color:#ffaa00; border-color:#ffaa00;" title="Purgar automáticamente todos los desafíos SBC expirados">⏳</button>
+                        <button class="futgg-btn" id="futbin-sbc-refresh-catalog-btn" style="padding:3px 6px; font-size:11px;" title="Actualizar lista de desafíos desde FUTBIN (Shift+Clic para restaurar de fábrica)">🔄</button>
+                        <button class="futgg-btn" id="futbin-sbc-clear-data-btn" style="padding:3px 6px; font-size:11px; color:#cbd5e1;" title="Limpiar jugadores cargados en la tabla del SBC actual">🧹</button>
+                        <button class="futgg-btn" id="futbin-reload-sbc-btn" style="padding:3px 6px; font-size:11px;" title="Restaurar último estado guardado del SBC">📥</button>
+                    </div>
                 </div>
 
-                <!-- Input para URL personalizada y botón Añadir SBC / Grupo -->
-                <div style="display:flex; align-items:center; gap:5px; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
-                    <input type="text" id="futbin-sbc-url-input" placeholder="Pega URL de Grupo o SBC de FUTBIN..." style="width:195px; background:#101924; border:1px solid #2e4157; color:#fff; padding:4px 8px; border-radius:6px; font-size:11px;" title="Pega la URL de un Grupo de SBCs (ej. Marquesinas) o de un SBC único de FUTBIN" />
-                    <button class="futgg-btn" id="futbin-sbc-add-btn" style="padding:4px 9px; font-size:11px; font-weight:700; border-color:#00ff88; color:#00ff88; white-space:nowrap;" title="Añadir un Grupo de SBCs (recuperando automáticamente los SBCs de adentro) o un SBC único">➕ Añadir SBC / Grupo</button>
-                </div>
+                <!-- Línea 2: Filtros Rápidos y Acciones de Club / Mercado -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; flex-wrap:nowrap;">
+                    <div style="display:flex; align-items:center; gap:10px; background:#162232; padding:3px 10px; border-radius:8px; border:1px solid #23344a; flex-wrap:nowrap;">
+                        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer; white-space:nowrap;" title="Mostrar únicamente cartas de Bronce (≤64) y Plata (65-74) que son las que más suben de precio">
+                            <input type="checkbox" id="futbin-filter-bronze-silver" checked style="cursor:pointer; accent-color:#00ff88;" />
+                            <span>Bronces / Platas</span>
+                        </label>
+                        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer; white-space:nowrap;" title="Mostrar únicamente jugadores que tienes en tu Club o Transferibles">
+                            <input type="checkbox" id="futbin-filter-in-club" style="cursor:pointer; accent-color:#00ff88;" />
+                            <span>En Mi Club</span>
+                        </label>
+                        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer; white-space:nowrap;" title="Ocultar cartas que están a precio mínimo de descarte (no rentables para vender)">
+                            <input type="checkbox" id="futbin-filter-hide-minimum" style="cursor:pointer; accent-color:#00ff88;" />
+                            <span>Ocultar precio mín.</span>
+                        </label>
+                    </div>
 
-                <!-- Filtros requeridos por el usuario -->
-                <div style="display:flex; align-items:center; gap:8px; background:#162232; padding:4px 8px; border-radius:8px; border:1px solid #23344a;">
-                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Mostrar únicamente cartas de Bronce (≤64) y Plata (65-74) que son las que más suben de precio">
-                        <input type="checkbox" id="futbin-filter-bronze-silver" checked style="cursor:pointer; accent-color:#00ff88;" />
-                        <span>Bronces / Platas</span>
-                    </label>
-                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Mostrar únicamente jugadores que tienes en tu Club o Transferibles">
-                        <input type="checkbox" id="futbin-filter-in-club" style="cursor:pointer; accent-color:#00ff88;" />
-                        <span>En Mi Club</span>
-                    </label>
-                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#cbd5e1; cursor:pointer;" title="Ocultar cartas que están a precio mínimo de descarte (no rentables para vender)">
-                        <input type="checkbox" id="futbin-filter-hide-minimum" style="cursor:pointer; accent-color:#00ff88;" />
-                        <span>Ocultar precio mín.</span>
-                    </label>
-                </div>
-
-                <!-- Acciones en lote para FUTBIN SBC -->
-                <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:4px 6px; border-radius:8px; border:1px solid #23344a;">
-                    <button class="futgg-btn" id="futbin-scan-club-btn" style="padding:5px 8px; font-size:11px;" title="Escanear tu club para ver cuáles de estos jugadores tienes">🔍 Buscar en Club</button>
-                    <button class="futgg-btn" id="futbin-check-market-btn" style="padding:5px 8px; font-size:11px;" title="Revisar el precio de mercado real progresivo de estas cartas">📊 Chequear Mercado</button>
-                    <button class="futgg-btn primary" id="futbin-list-profitable-btn" style="padding:5px 10px; font-size:11px;" title="Listar únicamente las cartas rentables que NO estén a precio mínimo">🚀 Listar Rentables</button>
+                    <div style="display:flex; gap:6px; align-items:center; background:#162232; padding:3px 7px; border-radius:8px; border:1px solid #23344a; flex-wrap:nowrap;">
+                        <button class="futgg-btn" id="futbin-scan-club-btn" style="padding:4px 9px; font-size:11px; white-space:nowrap;" title="Escanear tu club para ver cuáles de estos jugadores tienes">🔍 Buscar en Club</button>
+                        <button class="futgg-btn" id="futbin-check-market-btn" style="padding:4px 9px; font-size:11px; white-space:nowrap;" title="Revisar el precio de mercado real progresivo de estas cartas">📊 Chequear Mercado</button>
+                        <button class="futgg-btn primary" id="futbin-list-profitable-btn" style="padding:4px 10px; font-size:11px; white-space:nowrap;" title="Listar únicamente las cartas rentables que NO estén a precio mínimo">🚀 Listar Rentables</button>
+                    </div>
                 </div>
             </div>
 
