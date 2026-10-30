@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.17.1
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: barra compacta en 2 líneas, agrupación limpia de SBCs (Marquee Matchups 1-4 sin duplicados) y sincronización con Paletools.
+// @version      1.17.2
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: detección precisa de cartas ya listadas (dentro o fuera de la extensión) enviándolas siempre abajo, barra compacta en 2 líneas y sincronización con Paletools.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1818,7 +1818,7 @@
     ];
 
     const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
-    const SCRIPT_CATALOG_VERSION = "1.17.1";
+    const SCRIPT_CATALOG_VERSION = "1.17.2";
 
     function purgeExpiredSbcs(manual = true) {
         const catalog = GM_getValue('futbin_sbc_catalog', []);
@@ -2074,12 +2074,40 @@
                 }
             }
             const savedSelling = GM_getValue('futbin_sbc_selling_matches', null);
+            const now = Date.now();
             if (savedSelling && typeof savedSelling === 'object') {
                 State.sellingMatches = State.sellingMatches || {};
                 for (const [k, v] of Object.entries(savedSelling)) {
-                    if (v && (!State.sellingMatches[k] || !isLiveEAItem(State.sellingMatches[k].item))) {
+                    if (!v) continue;
+                    // Descartar listados guardados cuyo tiempo de expiración (1h) ya finalizó
+                    if (v.expiresAt && typeof v.expiresAt === 'number' && now >= v.expiresAt) {
+                        delete State.sellingMatches[k];
+                        if (State.marketPrices && State.marketPrices[k] && State.marketPrices[k].listed) {
+                            delete State.marketPrices[k];
+                        }
+                        continue;
+                    }
+                    if (!State.sellingMatches[k] || !isLiveEAItem(State.sellingMatches[k].item)) {
                         if (v.item) v.item.__serialized = true;
+                        if (v.expiresAt && typeof v.expiresAt === 'number') {
+                            v.expires = Math.max(1, Math.floor((v.expiresAt - now) / 1000));
+                        }
                         State.sellingMatches[k] = v;
+                    }
+                    // Si está vendiéndose activamente, no puede figurar como disponible en club ni en transferibles sin listar
+                    delete State.clubMatches[k];
+                    delete State.transferMatches[k];
+                    if (v.buyNow > 0) {
+                        State.marketPrices = State.marketPrices || {};
+                        State.marketPrices[k] = { listed: true, price: v.buyNow };
+                    }
+                }
+            }
+            // Limpiar cualquier etiqueta residual de "Listado a X" si la carta ya no está en venta activa
+            if (State.marketPrices && typeof State.marketPrices === 'object') {
+                for (const [k, m] of Object.entries(State.marketPrices)) {
+                    if (m && m.listed && (!State.sellingMatches || !State.sellingMatches[k])) {
+                        delete State.marketPrices[k];
                     }
                 }
             }
@@ -2364,6 +2392,225 @@
         return false;
     }
 
+    // Inspecciona una entidad UTItemEntity para determinar su estado exacto en la Lista de Transferibles
+    function getTransferItemStatus(it) {
+        if (!it || typeof it !== 'object') return { state: 'unknown' };
+        const auction = (typeof it.getAuctionData === 'function' ? it.getAuctionData() : null) || it._auction || it.auction;
+        if (!auction) return { state: 'transfer', auction: null, buyNow: 0, expires: 0 };
+
+        const tradeState = String(auction.tradeState || auction._tradeState || '').toLowerCase();
+        const bidState = String(auction.bidState || auction._bidState || '').toLowerCase();
+        const expires = Number(auction.expires !== undefined ? auction.expires : (auction._expires !== undefined ? auction._expires : 0));
+        const buyNow = Number(auction.buyNowPrice || auction._buyNowPrice || 0);
+        const startBid = Number(auction.startingBid || auction._startingBid || 0);
+        const currentBid = Number(auction.currentBid || auction._currentBid || 0);
+        const tradeId = Number(auction.tradeId || auction._tradeId || 0);
+
+        let isSoldFn = false;
+        let isSellingFn = false;
+        let isValidFn = false;
+        try { if (typeof auction.isSold === 'function') isSoldFn = Boolean(auction.isSold()); } catch (e) { }
+        try { if (typeof auction.isSelling === 'function') isSellingFn = Boolean(auction.isSelling()); } catch (e) { }
+        try {
+            if (typeof auction.isValid === 'function') isValidFn = Boolean(auction.isValid());
+            else isValidFn = (tradeId > 0 || buyNow > 0);
+        } catch (e) {
+            isValidFn = (tradeId > 0 || buyNow > 0);
+        }
+
+        // 1. Vendida (Sold)
+        if (isSoldFn || tradeState === 'sold' || (tradeState === 'closed' && (currentBid > 0 || bidState === 'highest' || bidState === 'buynow' || Number(it.lastSalePrice) > 0))) {
+            return { state: 'sold', auction, buyNow: currentBid || buyNow || Number(it.lastSalePrice) || 0, expires: 0 };
+        }
+
+        // 2. En venta activa (Selling)
+        if (isSellingFn || tradeState === 'active' || (isValidFn && expires > 0 && tradeState !== 'closed' && tradeState !== 'expired' && tradeState !== 'inactive')) {
+            const effectiveExpires = expires > 0 ? expires : 3600;
+            return {
+                state: 'selling',
+                auction,
+                buyNow: buyNow || startBid || 0,
+                startBid: startBid || 0,
+                expires: effectiveExpires
+            };
+        }
+
+        // 3. En lista de transferibles sin listar o expirada (Unlisted / Expired)
+        return { state: 'transfer', auction, buyNow: 0, expires: 0 };
+    }
+
+    // Verifica que un ítem obtenido de Paletools RAM (clubIndexDebug) siga realmente en el Club y no haya sido movido o listado
+    function isItemActuallyInClub(it, eaId = 0) {
+        if (!it || typeof it !== 'object') return false;
+        if (it.__fc27MovedToTransfer || it.__fc27Listed) return false;
+
+        const win = getAppWindow();
+        const transferPile = (win.enums && win.enums.FUTItemPile && win.enums.FUTItemPile.TRANSFER) ||
+            (win.enums && win.enums.ItemPile && win.enums.ItemPile.TRANSFER) ||
+            (win.ItemPile && win.ItemPile.TRANSFER) || 2;
+        const currentPile = Number(it.pile || it._pile || (typeof it.getPile === 'function' ? it.getPile() : 1));
+        if (currentPile === transferPile || currentPile === 5 || (typeof it.isTransferList === 'function' && it.isTransferList())) {
+            const st = getTransferItemStatus(it);
+            if (eaId > 0) {
+                if (st.state === 'selling') {
+                    State.sellingMatches[eaId] = {
+                        item: it,
+                        auction: st.auction,
+                        expires: st.expires,
+                        expiresAt: Date.now() + (st.expires * 1000),
+                        buyNow: st.buyNow
+                    };
+                    if (st.buyNow > 0) {
+                        State.marketPrices[eaId] = { listed: true, price: st.buyNow };
+                    }
+                    delete State.clubMatches[eaId];
+                    delete State.transferMatches[eaId];
+                } else if (st.state === 'sold') {
+                    State.soldMatches[eaId] = it;
+                    delete State.clubMatches[eaId];
+                    delete State.transferMatches[eaId];
+                } else if (!State.sellingMatches[eaId]) {
+                    State.transferMatches[eaId] = it;
+                    delete State.clubMatches[eaId];
+                }
+            }
+            return false;
+        }
+
+        const st = getTransferItemStatus(it);
+        if (st.state === 'selling') {
+            if (eaId > 0) {
+                State.sellingMatches[eaId] = {
+                    item: it,
+                    auction: st.auction,
+                    expires: st.expires,
+                    expiresAt: Date.now() + (st.expires * 1000),
+                    buyNow: st.buyNow
+                };
+                if (st.buyNow > 0) {
+                    State.marketPrices[eaId] = { listed: true, price: st.buyNow };
+                }
+                delete State.clubMatches[eaId];
+                delete State.transferMatches[eaId];
+            }
+            return false;
+        }
+        if (st.state === 'sold') {
+            if (eaId > 0) {
+                State.soldMatches[eaId] = it;
+                delete State.clubMatches[eaId];
+                delete State.transferMatches[eaId];
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // Obtiene y fusiona todos los ítems de la Lista de Transferibles desde el servidor de EA y el repositorio local en RAM
+    async function fetchAllTransferListItems(forceServer = true) {
+        const win = getAppWindow();
+        const combined = [];
+        const seenIds = new Set();
+
+        const addItems = (arr) => {
+            if (!Array.isArray(arr)) return;
+            for (const it of arr) {
+                if (!it || typeof it !== 'object') continue;
+                const uid = it.id || (it._auction && it._auction.tradeId) || Math.random();
+                if (!seenIds.has(uid)) {
+                    seenIds.add(uid);
+                    combined.push(it);
+                }
+            }
+        };
+
+        if (forceServer && win.services && win.services.Item && typeof win.services.Item.requestTransferItems === 'function') {
+            try {
+                const transferPile = (win.enums && win.enums.FUTItemPile && win.enums.FUTItemPile.TRANSFER) ||
+                    (win.enums && win.enums.ItemPile && win.enums.ItemPile.TRANSFER) ||
+                    (win.ItemPile && win.ItemPile.TRANSFER) || 2;
+                if (win.repositories && win.repositories.Item && typeof win.repositories.Item.setDirty === 'function') {
+                    try { win.repositories.Item.setDirty(transferPile); } catch (e) { }
+                }
+                const res = await callEAService(win.services.Item.requestTransferItems());
+                addItems(extractItemsFromEaResponse(res));
+            } catch (e) {
+                console.warn("[FUT.GG Helper] Error al solicitar transferibles a EA:", e);
+            }
+        }
+
+        if (win.repositories && win.repositories.Item) {
+            try {
+                if (typeof win.repositories.Item.getTransferList === 'function') {
+                    const tl = win.repositories.Item.getTransferList();
+                    addItems(tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []));
+                }
+                if (win.repositories.Item.transfer) {
+                    const col = win.repositories.Item.transfer._collection || win.repositories.Item.transfer.items;
+                    if (Array.isArray(col)) addItems(col);
+                    else if (col && typeof col === 'object') addItems(Object.values(col));
+                }
+            } catch (e) { }
+        }
+
+        return combined;
+    }
+
+    // Clasifica los ítems de la Lista de Transferibles contra las gemas de FUT.GG y jugadores SBC de FUTBIN
+    function classifyAndSyncTransferItems(transferItems) {
+        if (!Array.isArray(transferItems) || transferItems.length === 0) return;
+
+        const allTargets = [];
+        if (Array.isArray(State.gems)) allTargets.push(...State.gems);
+        if (State.futbinSbcData && Array.isArray(State.futbinSbcData.players)) allTargets.push(...State.futbinSbcData.players);
+
+        for (const it of transferItems) {
+            const st = getTransferItemStatus(it);
+            for (const target of allTargets) {
+                const eaId = Number(target.eaId);
+                if (eaId <= 0) continue;
+                if (matchesCard(it, eaId, target.name)) {
+                    if (st.state === 'selling') {
+                        State.sellingMatches[eaId] = {
+                            item: it,
+                            auction: st.auction,
+                            expires: st.expires,
+                            expiresAt: Date.now() + (st.expires * 1000),
+                            buyNow: st.buyNow
+                        };
+                        if (st.buyNow > 0) {
+                            State.marketPrices[eaId] = { listed: true, price: st.buyNow };
+                            State.customPrices[eaId] = st.buyNow;
+                        }
+                        delete State.transferMatches[eaId];
+                        delete State.clubMatches[eaId];
+                        delete State.soldMatches[eaId];
+                    } else if (st.state === 'sold') {
+                        if (!State.sellingMatches[eaId]) {
+                            State.soldMatches[eaId] = it;
+                            delete State.transferMatches[eaId];
+                            delete State.clubMatches[eaId];
+                            if (State.marketPrices[eaId] && State.marketPrices[eaId].listed) {
+                                delete State.marketPrices[eaId];
+                            }
+                        }
+                    } else {
+                        // Carta en lista de transferibles sin listar (o expirada)
+                        if (!State.sellingMatches[eaId]) {
+                            it._isTradeable = true;
+                            State.transferMatches[eaId] = it;
+                            delete State.clubMatches[eaId];
+                            delete State.soldMatches[eaId];
+                            if (State.marketPrices[eaId] && State.marketPrices[eaId].listed) {
+                                delete State.marketPrices[eaId];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     async function findCardInAccount(gem) {
         const win = getAppWindow();
         const eaId = Number(gem.eaId);
@@ -2378,17 +2625,35 @@
         if (isLiveEAItem(State.transferMatches[eaId])) {
             return State.transferMatches[eaId];
         }
-        if (isLiveEAItem(State.clubMatches[eaId])) {
+        if (isLiveEAItem(State.clubMatches[eaId]) && isItemActuallyInClub(State.clubMatches[eaId], eaId)) {
             return State.clubMatches[eaId];
         }
         if (State.soldMatches[eaId]) return null; // Ya vendido, no buscar en el club
 
-        // 2. Comprobar primero en el Club Index de Paletools en RAM (0ms, devuelve UTItemEntity real)
+        // 2. Verificar primero en la Lista de Transferibles en vivo (detecta ventas activas o listas para listar)
+        try {
+            let transferItems = await fetchAllTransferListItems(false);
+            if (!transferItems || transferItems.length === 0) {
+                transferItems = await fetchAllTransferListItems(true);
+            }
+            if (transferItems && transferItems.length > 0) {
+                classifyAndSyncTransferItems(transferItems);
+                if (State.sellingMatches[eaId] && State.sellingMatches[eaId].item) {
+                    return State.sellingMatches[eaId].item;
+                }
+                if (isLiveEAItem(State.transferMatches[eaId])) {
+                    console.log(`[FUT.GG Helper] 📋 Entidad UTItemEntity encontrada en Lista de Transferibles:`, State.transferMatches[eaId]);
+                    return State.transferMatches[eaId];
+                }
+            }
+        } catch (eTr) { }
+
+        // 3. Comprobar en el Club Index de Paletools en RAM (0ms, devuelve UTItemEntity real si sigue en el club)
         try {
             if (typeof win.clubIndexDebug === 'function') {
                 const ptDebug = win.clubIndexDebug();
                 if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
-                    const ptMatches = ptDebug.players.filter(it => matchesCard(it, eaId, name));
+                    const ptMatches = ptDebug.players.filter(it => matchesCard(it, eaId, name) && isItemActuallyInClub(it, eaId));
                     if (ptMatches.length > 0) {
                         const tradeable = ptMatches.find(it => isItemTradeable(it));
                         const selected = tradeable || ptMatches[0];
@@ -2402,33 +2667,6 @@
                 }
             }
         } catch (ePt) { }
-
-        // 3. Verificar en la Lista de Transferibles en vivo (por si estaba en transferibles o restaurada de disco)
-        try {
-            let transferItems = [];
-            if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
-                const tl = win.repositories.Item.getTransferList();
-                transferItems = tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []);
-            }
-            if ((!transferItems || transferItems.length === 0) && win.services && win.services.Item && typeof win.services.Item.requestTransferItems === 'function') {
-                const res = await callEAService(win.services.Item.requestTransferItems());
-                transferItems = extractItemsFromEaResponse(res);
-            }
-            if (transferItems && transferItems.length > 0) {
-                const trMatches = transferItems.filter(it => matchesCard(it, eaId, name));
-                for (const it of trMatches) {
-                    const auction = (typeof it.getAuctionData === 'function' ? it.getAuctionData() : null) || it._auction;
-                    const tradeState = (auction && (auction.tradeState || auction._tradeState)) || '';
-                    if (tradeState !== 'closed' && tradeState !== 'sold' && tradeState !== 'active') {
-                        it._isTradeable = true;
-                        State.transferMatches[eaId] = it;
-                        delete State.clubMatches[eaId];
-                        console.log(`[FUT.GG Helper] 📋 Entidad UTItemEntity encontrada en Lista de Transferibles:`, it);
-                        return it;
-                    }
-                }
-            }
-        } catch (eTr) { }
 
         // 4. Búsqueda directa en Club vía services.Club.search con defId = [eaId] (consulta en vivo al servidor de EA)
         try {
@@ -2564,8 +2802,14 @@
                         const eaId = Number(card.eaId);
                         if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) continue;
 
-                        const matched = ptPlayers.find(it => matchesCard(it, eaId, card.name));
-                        if (matched) {
+                        const matches = ptPlayers.filter(it => matchesCard(it, eaId, card.name) && isItemActuallyInClub(it, eaId));
+                        if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) {
+                            State.clubScanned[eaId] = true;
+                            continue;
+                        }
+                        if (matches.length > 0) {
+                            const tradeable = matches.find(it => isItemTradeable(it));
+                            const matched = tradeable || matches[0];
                             matched._isTradeable = isItemTradeable(matched);
                             State.clubMatches[eaId] = matched;
                             foundCount++;
@@ -2612,6 +2856,7 @@
 
                         for (const card of chunk) {
                             const eaId = Number(card.eaId);
+                            if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) continue;
                             const match = items.find(it => matchesCard(it, eaId, card.name));
                             if (match) {
                                 match._isTradeable = isItemTradeable(match);
@@ -2624,7 +2869,10 @@
                         // Verificar en Almacenamiento/Storage de duplicados en bloque para las no encontradas
                         if (win.services && win.services.Item && typeof win.services.Item.searchStorageItems === 'function') {
                             try {
-                                const stillMissing = chunk.filter(c => !State.clubMatches[Number(c.eaId)]);
+                                const stillMissing = chunk.filter(c => {
+                                    const id = Number(c.eaId);
+                                    return !State.clubMatches[id] && !State.sellingMatches[id] && !State.soldMatches[id] && !State.transferMatches[id];
+                                });
                                 const stillMissingIds = stillMissing.map(c => Number(c.eaId)).filter(id => id > 0);
                                 if (stillMissingIds.length > 0) {
                                     const storCrit = createSearchCriteria();
@@ -2682,49 +2930,43 @@
         }
 
         if (!isSilent) notificar("🔍 Sincronizando estado de tu Club y Transferibles...", "#00ccff");
+
+        // Conservar respaldo de ventas activas recientes por si la respuesta de red de transferibles viniera vacía
+        const now = Date.now();
+        const prevSelling = {};
+        if (State.sellingMatches) {
+            for (const [k, v] of Object.entries(State.sellingMatches)) {
+                if (v && v.expiresAt && v.expiresAt > now) {
+                    prevSelling[k] = v;
+                }
+            }
+        }
+
         State.clubMatches = {};
         State.transferMatches = {};
         State.sellingMatches = {};
         State.soldMatches = {};
-        State.lastScanTimestamp = Date.now();
+        State.lastScanTimestamp = now;
 
-        // 1. Obtener la lista completa y fresca de transferibles directamente del servidor de EA
-        let transferItems = [];
-        try {
-            if (win.services && win.services.Item && typeof win.services.Item.requestTransferItems === 'function') {
-                const res = await callEAService(win.services.Item.requestTransferItems());
-                transferItems = extractItemsFromEaResponse(res);
-            } else if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
-                const tl = win.repositories.Item.getTransferList();
-                transferItems = tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []);
+        // 1. Obtener la lista completa y fresca de transferibles (servidor de EA + repositorio local)
+        const transferItems = await fetchAllTransferListItems(true);
+        classifyAndSyncTransferItems(transferItems);
+
+        // Si el servidor aún no devolvió ítems de transferibles pero teníamos listados activos vigentes, preservarlos
+        if (transferItems.length === 0) {
+            for (const [k, v] of Object.entries(prevSelling)) {
+                v.expires = Math.max(1, Math.floor((v.expiresAt - now) / 1000));
+                State.sellingMatches[k] = v;
+                if (v.buyNow > 0) {
+                    State.marketPrices[k] = { listed: true, price: v.buyNow };
+                }
             }
-        } catch (e) {
-            console.warn("[FUT.GG Helper] Error al solicitar transferibles a EA:", e);
-        }
-
-        // Clasificar los ítems de transferibles
-        for (const it of transferItems) {
-            const auction = (typeof it.getAuctionData === 'function' ? it.getAuctionData() : null) || it._auction;
-            const tradeState = (auction && (auction.tradeState || auction._tradeState)) || '';
-            const isValidAuction = auction && (typeof auction.isValid === 'function' ? auction.isValid() : (auction.tradeId > 0));
-
-            for (const gem of State.gems) {
-                const eaId = Number(gem.eaId);
-                if (matchesCard(it, eaId, gem.name)) {
-                    if (tradeState === 'closed' || tradeState === 'sold') {
-                        State.soldMatches[eaId] = it;
-                    } else if (tradeState === 'active' || (isValidAuction && (auction.expires > 0 || auction._expires > 0))) {
-                        const expiresSec = auction.expires || auction._expires || 0;
-                        const buyNow = auction.buyNowPrice || auction._buyNowPrice || 0;
-                        State.sellingMatches[eaId] = {
-                            item: it,
-                            auction: auction,
-                            expires: expiresSec,
-                            expiresAt: Date.now() + (expiresSec * 1000),
-                            buyNow: buyNow
-                        };
-                    } else {
-                        State.transferMatches[eaId] = it;
+        } else {
+            // Limpiar cualquier estado residual de "Listado a X" en cartas que ya NO están en venta activa en EA
+            if (State.marketPrices) {
+                for (const [k, m] of Object.entries(State.marketPrices)) {
+                    if (m && m.listed && !State.sellingMatches[k]) {
+                        delete State.marketPrices[k];
                     }
                 }
             }
@@ -2737,6 +2979,13 @@
         });
         await findCardsInClubBatch(gemsToScan, isSilent);
 
+        // Garantizar que ninguna carta en venta activa quede simultáneamente en clubMatches o transferMatches
+        for (const k of Object.keys(State.sellingMatches)) {
+            delete State.clubMatches[k];
+            delete State.transferMatches[k];
+        }
+
+        persistFutbinState();
         renderGemsTable();
         updateBadge();
         updateNewGemNoticeIfInClub();
@@ -3306,6 +3555,7 @@
 
             dismissEaDialogIfPresent();
             item.pile = pile;
+            item.__fc27MovedToTransfer = true;
             delete State.clubMatches[eaId];
             State.transferMatches[eaId] = item;
             persistFutbinState();
@@ -3319,6 +3569,7 @@
             const errStr = String(err && (err.message || err.reason || err.statusText || err) || '').toLowerCase();
             if (errStr.includes('destination full') || errStr.includes('full') || (err && (err.status === 403 || err.code === 403))) {
                 item.pile = pile;
+                item.__fc27MovedToTransfer = true;
                 State.transferMatches[eaId] = item;
                 delete State.clubMatches[eaId];
                 renderCurrentTable();
@@ -3429,11 +3680,21 @@
             await callEAService(services.Item.list(item, startBid, validBuyNow, 3600));
             scheduleDismissEaDialog();
 
+            try {
+                if (win.repositories && win.repositories.Item && typeof win.repositories.Item.setDirty === 'function') {
+                    win.repositories.Item.setDirty(transferPile);
+                }
+            } catch (e) { }
+
+            item.pile = transferPile;
+            item.__fc27MovedToTransfer = true;
+            item.__fc27Listed = true;
+
             delete State.transferMatches[eaId];
             delete State.clubMatches[eaId];
             State.sellingMatches[eaId] = {
                 item: item,
-                auction: { expires: 3600, buyNowPrice: validBuyNow, startingBid: startBid },
+                auction: { tradeState: 'active', expires: 3600, buyNowPrice: validBuyNow, startingBid: startBid },
                 expires: 3600,
                 expiresAt: Date.now() + 3600000,
                 buyNow: validBuyNow
@@ -3700,21 +3961,22 @@
         let matched = 0;
         const win = getAppWindow();
 
-        // 1. Cargar transferibles si están disponibles en RAM de EA
-        if (win.repositories && win.repositories.Item && typeof win.repositories.Item.getTransferList === 'function') {
+        // 1. Cargar y clasificar transferibles si están disponibles en RAM de EA (distinguiendo ventas activas, vendidas y sin listar)
+        if (win.repositories && win.repositories.Item) {
             try {
-                const tl = win.repositories.Item.getTransferList();
-                const trItems = tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []);
-                if (trItems && trItems.length) {
-                    for (const p of State.futbinSbcData.players) {
-                        const eaId = Number(p.eaId);
-                        if (eaId <= 0) continue;
-                        const match = trItems.find(it => matchesCard(it, eaId, p.name));
-                        if (match) {
-                            State.transferMatches[eaId] = match;
-                            delete State.clubMatches[eaId];
-                        }
-                    }
+                const trItems = [];
+                if (typeof win.repositories.Item.getTransferList === 'function') {
+                    const tl = win.repositories.Item.getTransferList();
+                    const arr = tl && tl.items ? tl.items : (Array.isArray(tl) ? tl : []);
+                    if (Array.isArray(arr)) trItems.push(...arr);
+                }
+                if (win.repositories.Item.transfer) {
+                    const col = win.repositories.Item.transfer._collection || win.repositories.Item.transfer.items;
+                    if (Array.isArray(col)) trItems.push(...col);
+                    else if (col && typeof col === 'object') trItems.push(...Object.values(col));
+                }
+                if (trItems.length > 0) {
+                    classifyAndSyncTransferItems(trItems);
                 }
             } catch (e) { }
         }
@@ -3726,8 +3988,12 @@
                 if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
                     for (const p of State.futbinSbcData.players) {
                         const eaId = Number(p.eaId);
-                        if (eaId > 0 && !isLiveEAItem(State.clubMatches[eaId]) && !isLiveEAItem(State.transferMatches[eaId]) && !State.sellingMatches[eaId]) {
-                            const matches = ptDebug.players.filter(it => matchesCard(it, eaId, p.name));
+                        if (eaId > 0 && !isLiveEAItem(State.clubMatches[eaId]) && !isLiveEAItem(State.transferMatches[eaId]) && !State.sellingMatches[eaId] && !State.soldMatches[eaId]) {
+                            const matches = ptDebug.players.filter(it => matchesCard(it, eaId, p.name) && isItemActuallyInClub(it, eaId));
+                            if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) {
+                                State.clubScanned[eaId] = true;
+                                continue;
+                            }
                             if (matches.length > 0) {
                                 const tradeable = matches.find(it => isItemTradeable(it));
                                 const match = tradeable || matches[0];
@@ -3741,6 +4007,14 @@
                 }
             }
         } catch (ePt) { }
+
+        // Garantizar que ninguna carta en venta activa quede simultáneamente en clubMatches o transferMatches
+        if (State.sellingMatches) {
+            for (const k of Object.keys(State.sellingMatches)) {
+                delete State.clubMatches[k];
+                delete State.transferMatches[k];
+            }
+        }
 
         for (const p of State.futbinSbcData.players) {
             const eaId = Number(p.eaId);
@@ -3772,6 +4046,16 @@
             notificar("⏹️ Escaneo de club detenido por el usuario", "#ffaa00");
             renderBatchControls();
             return;
+        }
+
+        // 0. Sincronizar lista de transferibles con el servidor de EA si es escaneo manual
+        if (!isSilent) {
+            try {
+                const trItems = await fetchAllTransferListItems(true);
+                if (trItems.length > 0) {
+                    classifyAndSyncTransferItems(trItems);
+                }
+            } catch (e) { }
         }
 
         // 1. Coincidencia rápida en memoria RAM (0 peticiones de red)
@@ -6254,18 +6538,17 @@
                 const inClub = State.clubMatches[eaId];
                 const sold = State.soldMatches[eaId];
 
+                // Vendiéndose activamente en mercado o ya vendidas tienen precedencia absoluta para ir abajo del todo
+                if (selling) return 5;
+                if (sold) return 6;
                 // Prioridad 1: En transferibles (listas para listar de inmediato)
                 if (inTransfer) return 1;
                 // Prioridad 2: En club comerciables (listas para mover o listar)
                 if (inClub && isItemTradeable(inClub)) return 2;
                 // Prioridad 3: No escaneadas aún
-                if (!hasScanned && !selling && !sold) return 3;
+                if (!hasScanned) return 3;
                 // Prioridad 4: Intransferibles en club
                 if (inClub && !isItemTradeable(inClub)) return 4;
-                // Prioridad 5: Vendiéndose activamente en mercado (abajo del todo)
-                if (selling) return 5;
-                // Prioridad 6: Ya vendidas
-                if (sold) return 6;
                 // Prioridad 7: Fuera del club
                 return 7;
             };
@@ -6419,8 +6702,9 @@
                         <button class="futgg-btn danger" style="padding:2px 6px; font-size:10px;" data-action="stop-market-crawl" data-eaid="${eaId}">⏹️ Parar</button>
                     </div>
                 `;
-            } else if (market && market.listed) {
-                marketHtml = `<span style="color:#00ff88; font-weight:bold;">🚀 Listado a ${formatCoins(market.price)}</span>`;
+            } else if (selling && ((market && market.listed) || selling.buyNow > 0)) {
+                const listedVal = (market && market.price) ? market.price : selling.buyNow;
+                marketHtml = `<span style="color:#00ff88; font-weight:bold;">🚀 Listado a ${formatCoins(listedVal)}</span>`;
             } else if (market && market.isExtinct) {
                 const extinctPrice = market.suggestedExtinctBin || market.lowestBin || State.customPrices[eaId] || roundToValidBid(Math.round(getItemMaxPrice(eaId, gem) * 0.90), 'down');
                 marketHtml = `
@@ -6756,6 +7040,10 @@
                 <tbody>
         `;
 
+        let hasShownSellingSeparator = false;
+        let itemsRenderedBeforeSelling = 0;
+        const sellingCount = displayedPlayers.filter(x => !!State.sellingMatches[Number(x.eaId)]).length;
+
         for (const p of displayedPlayers) {
             const eaId = Number(p.eaId);
             const inClub = State.clubMatches[eaId];
@@ -6764,10 +7052,28 @@
             const sold = State.soldMatches[eaId];
             const market = State.marketPrices[eaId];
 
+            if (selling && !hasShownSellingSeparator && itemsRenderedBeforeSelling > 0) {
+                hasShownSellingSeparator = true;
+                html += `
+                    <tr class="futgg-section-divider-row">
+                        <td colspan="7">
+                            <div class="futgg-section-divider">
+                                <span>🚀 Ya Listadas en el Mercado (${sellingCount} ${sellingCount === 1 ? 'carta' : 'cartas'})</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            if (!selling) {
+                itemsRenderedBeforeSelling++;
+            }
+
             // Estado en Club (solo emojis con tooltip)
             let clubStatusHtml = '';
             if (selling) {
-                const expiresMin = formatTimeRemaining(selling.expires);
+                const remainingSec = selling.expiresAt ? Math.max(0, Math.floor((selling.expiresAt - Date.now()) / 1000)) : (selling.expires || 0);
+                const expiresMin = formatTimeRemaining(remainingSec);
                 clubStatusHtml = `
                     <div style="text-align:center;" title="En venta activa por ${formatCoins(selling.buyNow)} (expira en ${expiresMin})">
                         <span style="font-size:16px; cursor:help;">🚀</span>
@@ -6807,7 +7113,10 @@
 
             // Columna Mercado Real
             let marketHtml = '';
-            if (!market) {
+            if (selling && ((market && market.listed) || selling.buyNow > 0)) {
+                const listedVal = (market && market.price) ? market.price : selling.buyNow;
+                marketHtml = `<span style="color:#00ff88; font-weight:bold;">🚀 Listado a ${formatCoins(listedVal)}</span>`;
+            } else if (!market) {
                 marketHtml = `
                     <div style="display:flex; gap:4px; align-items:center;">
                         <button class="futgg-btn" style="padding:4px 8px; font-size:11px;" data-action="check-market" data-eaid="${eaId}" title="Buscar en mercado con filtro progresivo">🔍 Consultar</button>
@@ -6932,7 +7241,17 @@
                 suggested = p.futggPrice || p.futbinPrice || (p.quality === 'bronze' ? 200 : (p.quality === 'silver' ? 350 : 700));
             }
 
-            if (suggested > 0) {
+            if (selling) {
+                const remainingSec = selling.expiresAt ? Math.max(0, Math.floor((selling.expiresAt - Date.now()) / 1000)) : (selling.expires || 0);
+                const timeStr = formatTimeRemaining(remainingSec);
+                priceColHtml = `
+                    <div style="display:flex; flex-direction:column; gap:2px;">
+                        <div style="font-weight:700; color:#00ff88; font-size:13px;">${formatCoins(selling.buyNow)} <span style="font-size:10px; color:#8fa0b5;">BIN</span></div>
+                        <div style="font-size:10px; color:#8fa0b5;">Puja: <b>${formatCoins(calculateStartBid(selling.buyNow))}</b></div>
+                        <div style="font-size:10px; color:#00ff88;">Expira: <b>${timeStr}</b></div>
+                    </div>
+                `;
+            } else if (suggested > 0) {
                 const isMin = market ? isMinimumPrice(p, market) : false;
                 const isExtinct = market && market.isExtinct;
                 const borderStyle = isExtinct ? 'border:1px solid #ef4444; color:#fca5a5; font-weight:bold;' : (isMin ? 'border-color:#ffaa00; color:#ffaa00;' : '');
@@ -6955,7 +7274,9 @@
             const isMin = market ? isMinimumPrice(p, market) : false;
             const isExtinct = market && market.isExtinct;
             if (selling) {
-                actionHtml = `<span style="font-size:11px; color:#00ccff; font-weight:bold; white-space:nowrap;">🚀 En venta</span>`;
+                const remainingSec = selling.expiresAt ? Math.max(0, Math.floor((selling.expiresAt - Date.now()) / 1000)) : (selling.expires || 0);
+                const timeStr = formatTimeRemaining(remainingSec);
+                actionHtml = `<span class="futgg-tag selling" style="padding:4px 8px; font-size:11px; font-weight:700; white-space:nowrap;">⏱️ Expira: ${timeStr}</span>`;
             } else if (inTransfer) {
                 if (isExtinct) {
                     actionHtml = `
@@ -7131,15 +7452,18 @@
     // Gancho de auto-sincronización cuando Paletools carga su índice de club en RAM
     try {
         const win = getAppWindow();
-        win.addEventListener('clubIndexLoaded', () => {
+        win.addEventListener('clubIndexLoaded', async () => {
             console.log("%c[FC 27 Helper] ⚡ Evento 'clubIndexLoaded' de Paletools recibido. Sincronizando jugadores del club en RAM...", "color:#00ff88; font-weight:bold;");
+            try {
+                const trItems = await fetchAllTransferListItems(false);
+                if (trItems.length > 0) classifyAndSyncTransferItems(trItems);
+            } catch (e) { }
             if (State.activeTab === 'futbin') {
                 matchFutbinPlayersWithKnownItems();
                 renderFutbinSbcTable();
             } else if (State.gems && State.gems.length > 0) {
-                findCardsInClubBatch(State.gems, true).then(() => {
-                    renderGemsTable();
-                });
+                await findCardsInClubBatch(State.gems, true);
+                renderGemsTable();
             }
         });
     } catch (e) { }
