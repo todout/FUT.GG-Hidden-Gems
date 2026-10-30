@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.17.2
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: detección precisa de cartas ya listadas (dentro o fuera de la extensión) enviándolas siempre abajo, barra compacta en 2 líneas y sincronización con Paletools.
+// @version      1.17.3
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: ajuste de precio -/+ instantáneo sin lag, resaltado de la última carta consultada, y detección de cartas ya listadas.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1818,7 +1818,7 @@
     ];
 
     const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
-    const SCRIPT_CATALOG_VERSION = "1.17.2";
+    const SCRIPT_CATALOG_VERSION = "1.17.3";
 
     function purgeExpiredSbcs(manual = true) {
         const catalog = GM_getValue('futbin_sbc_catalog', []);
@@ -1987,12 +1987,31 @@
         };
     }
 
+    let _persistCustomPricesTimer = null;
+    function schedulePersistCustomPrices() {
+        if (_persistCustomPricesTimer) clearTimeout(_persistCustomPricesTimer);
+        _persistCustomPricesTimer = setTimeout(() => {
+            try {
+                GM_setValue('futbin_sbc_custom_prices', State.customPrices || {});
+            } catch (e) { }
+        }, 250);
+    }
+
     function persistFutbinState() {
         try {
             if (State.futbinSbcData) {
                 GM_setValue('futbin_sbc_data', State.futbinSbcData);
             }
-            GM_setValue('futbin_sbc_market_prices', State.marketPrices || {});
+            if (State.marketPrices) {
+                const cleanMarket = {};
+                for (const [k, v] of Object.entries(State.marketPrices)) {
+                    if (v && typeof v === 'object') {
+                        const { rawItems, ...rest } = v;
+                        cleanMarket[k] = rest;
+                    }
+                }
+                GM_setValue('futbin_sbc_market_prices', cleanMarket);
+            }
             GM_setValue('futbin_sbc_custom_prices', State.customPrices || {});
             GM_setValue('futbin_sbc_club_scanned', State.clubScanned || {});
             if (State.clubMatches) {
@@ -3102,6 +3121,7 @@
         }
 
         const eaId = Number(gem.eaId);
+        State.focusedGemId = eaId;
         State.abortMarketCrawl[eaId] = false;
         if (!isAutomated) State.forceCancelAllOperations = false;
         State.marketPrices[eaId] = {
@@ -3335,12 +3355,12 @@
                     filterLabel,
                     filterType,
                     tiers: analysis.tiers,
-                    rawItems: allItems,
                     isExtinct: false,
                     crawling: false,
                     loading: false,
                     updatedAt: Date.now()
                 };
+                State.focusedGemId = eaId;
 
                 // Calcular precio de venta sugerido protegiendo de gangas
                 const basePrice = analysis.hasOutlier ? analysis.realisticBin : analysis.lowestBin;
@@ -3368,6 +3388,10 @@
             if (State.marketPrices[eaId]) {
                 State.marketPrices[eaId].crawling = false;
                 State.marketPrices[eaId].loading = false;
+            }
+            State.focusedGemId = eaId;
+            if (State.activeTab === 'futbin') {
+                persistFutbinState();
             }
             renderCurrentTable();
         }
@@ -5032,10 +5056,13 @@
                 color: #00ff88;
             }
             .futgg-table tr.futgg-row-focused td {
-                background: rgba(0, 204, 255, 0.25) !important;
-                border-top: 1px solid #00ccff !important;
-                border-bottom: 1px solid #00ccff !important;
-                transition: background 1.5s ease;
+                background: rgba(0, 255, 136, 0.09) !important;
+                border-top: 1px solid rgba(0, 255, 136, 0.35) !important;
+                border-bottom: 1px solid rgba(0, 255, 136, 0.35) !important;
+                transition: background 0.25s ease;
+            }
+            .futgg-table tr.futgg-row-focused td:first-child {
+                box-shadow: inset 3px 0 0 #00ff88 !important;
             }
 
             /* PESTAÑAS DEL HEADER */
@@ -6064,8 +6091,10 @@
             } else if (action === 'pick-price') {
                 const price = parseInt(btn.getAttribute('data-price'), 10);
                 if (price && eaId) {
-                    State.focusedGemId = eaId;
-                    State.customPrices[eaId] = price;
+                    const numId = Number(eaId);
+                    State.focusedGemId = numId;
+                    State.customPrices[numId] = price;
+                    schedulePersistCustomPrices();
                     renderCurrentTable();
                     notificar(`🎯 Precio seleccionado para ${gem ? gem.name : 'jugador'}: ${formatCoins(price)} (Puja: ${formatCoins(calculateStartBid(price))})`, "#00ff88");
                 }
@@ -6091,10 +6120,10 @@
 
         panel.addEventListener('input', (e) => {
             if (e.target.classList.contains('futgg-price-input')) {
-                const eaId = e.target.getAttribute('data-eaid');
+                const eaId = Number(e.target.getAttribute('data-eaid'));
                 const val = parseInt(e.target.value, 10) || 0;
                 State.customPrices[eaId] = val;
-                persistFutbinState();
+                schedulePersistCustomPrices();
                 const cell = e.target.closest('td');
                 if (cell) {
                     const b = cell.querySelector('b');
@@ -6439,10 +6468,14 @@
     }
 
     function adjustPriceByEaId(eaId, direction) {
-        let current = State.customPrices[eaId];
+        const numId = Number(eaId);
+        const row = document.getElementById(`futgg-row-${numId}`);
+        const inputEl = row ? row.querySelector('.futgg-price-input') : null;
+
+        let current = inputEl ? (parseInt(inputEl.value.replace(/[^0-9]/g, ''), 10) || 0) : State.customPrices[numId];
         if (!current) {
-            const player = findAnyPlayerById(eaId);
-            const market = State.marketPrices[eaId];
+            const player = findAnyPlayerById(numId);
+            const market = State.marketPrices[numId];
             if (market && market.lowestBin) {
                 current = (market.hasOutlier ? market.realisticBin : market.lowestBin) - CONFIG.undercutAmount;
             } else if (player) {
@@ -6452,9 +6485,31 @@
         }
         const step = getBidStep(current);
         const nextPrice = direction > 0 ? current + step : Math.max(200, current - step);
-        State.customPrices[eaId] = roundToValidBid(nextPrice, direction > 0 ? 'up' : 'down');
-        persistFutbinState();
-        renderCurrentTable();
+        const newPrice = roundToValidBid(nextPrice, direction > 0 ? 'up' : 'down');
+        State.customPrices[numId] = newPrice;
+        schedulePersistCustomPrices();
+
+        // Actualizar el DOM de la fila directamente en el acto (0ms de lag, sin reconstruir toda la tabla)
+        if (row && inputEl) {
+            inputEl.value = newPrice;
+            const priceCell = inputEl.closest('td');
+            if (priceCell) {
+                const bidBold = priceCell.querySelector('b');
+                if (bidBold) {
+                    bidBold.textContent = formatCoins(calculateStartBid(newPrice));
+                }
+            }
+            // Actualizar desglose de precios si está desplegado en esta fila
+            const tierRows = row.querySelectorAll('.futgg-tier-row');
+            if (tierRows.length > 0) {
+                tierRows.forEach(tr => {
+                    const tPrice = parseInt(tr.getAttribute('data-price'), 10);
+                    tr.classList.toggle('selected', tPrice === newPrice);
+                });
+            }
+        } else {
+            renderCurrentTable();
+        }
     }
 
     function renderGemsTable() {
