@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.17.3
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: ajuste de precio -/+ instantáneo sin lag, resaltado de la última carta consultada, y detección de cartas ya listadas.
+// @version      1.17.4
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: chequeo de mercado exclusivo para cartas disponibles para listar (omite ya listadas), distinción de versiones IF vs Oro, y ajuste -/+ sin lag.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1818,7 +1818,7 @@
     ];
 
     const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
-    const SCRIPT_CATALOG_VERSION = "1.17.3";
+    const SCRIPT_CATALOG_VERSION = "1.17.4";
 
     function purgeExpiredSbcs(manual = true) {
         const catalog = GM_getValue('futbin_sbc_catalog', []);
@@ -2371,7 +2371,7 @@
         return `${m} min`;
     }
 
-    function matchesCard(it, eaId, name) {
+    function matchesCard(it, eaId, name, expectedRating = 0) {
         if (!it) return false;
         const itemObj = it.itemData || it._item || it.item || it;
         const numEaId = Number(eaId || 0);
@@ -2382,6 +2382,8 @@
         const assetId = Number(itemObj.assetId || it.assetId || 0);
         const conceptId = Number(itemObj.conceptId || it.conceptId || 0);
         const baseId = Number(itemObj.baseId || it.baseId || 0);
+        const itemRating = Number(itemObj.rating || it.rating || (itemObj._staticData && itemObj._staticData.rating) || 0);
+        const targetRating = Number(expectedRating || 0);
 
         // En EA FC, los 24 bits inferiores de resourceId o definitionId corresponden al assetId base
         const maskedBitwise = (resId > 0) ? (resId & 0x00FFFFFF) : 0;
@@ -2389,7 +2391,18 @@
 
         // 1. Coincidencia directa por ID si se dispone de eaId (estricta e infalible)
         if (numEaId > 0) {
-            return (resId === numEaId || defId === numEaId || maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId || baseId === numEaId || maskedBitwise === numEaId || defBitwise === numEaId);
+            if (resId === numEaId || defId === numEaId) {
+                return true;
+            }
+            const matchesBase = (maskedId === numEaId || staticId === numEaId || assetId === numEaId || conceptId === numEaId || baseId === numEaId || maskedBitwise === numEaId || defBitwise === numEaId);
+            if (matchesBase) {
+                // Evitar confundir una versión especial/IF con la carta base Oro/Plata/Bronce si tienen distinta media
+                if (targetRating > 0 && itemRating > 0 && itemRating !== targetRating) {
+                    return false;
+                }
+                return true;
+            }
+            return false;
         }
 
         // 2. Coincidencia por nombre exacto únicamente si NO se dispone de ningún eaId
@@ -2588,7 +2601,7 @@
             for (const target of allTargets) {
                 const eaId = Number(target.eaId);
                 if (eaId <= 0) continue;
-                if (matchesCard(it, eaId, target.name)) {
+                if (matchesCard(it, eaId, target.name, target.rating)) {
                     if (st.state === 'selling') {
                         State.sellingMatches[eaId] = {
                             item: it,
@@ -2672,7 +2685,7 @@
             if (typeof win.clubIndexDebug === 'function') {
                 const ptDebug = win.clubIndexDebug();
                 if (ptDebug && ptDebug.loaded && Array.isArray(ptDebug.players) && ptDebug.players.length > 0) {
-                    const ptMatches = ptDebug.players.filter(it => matchesCard(it, eaId, name) && isItemActuallyInClub(it, eaId));
+                    const ptMatches = ptDebug.players.filter(it => matchesCard(it, eaId, name, gem.rating) && isItemActuallyInClub(it, eaId));
                     if (ptMatches.length > 0) {
                         const tradeable = ptMatches.find(it => isItemTradeable(it));
                         const selected = tradeable || ptMatches[0];
@@ -2699,7 +2712,7 @@
 
                 let res = await callEAService(win.services.Club.search(criteria));
                 let items = extractItemsFromEaResponse(res);
-                let matches = items.filter(it => matchesCard(it, eaId, name));
+                let matches = items.filter(it => matchesCard(it, eaId, name, gem.rating));
 
                 // Fallback con maskedDefId si defId = [eaId] no devolvió resultados
                 if (matches.length === 0) {
@@ -2711,7 +2724,7 @@
                     altCriteria.defId = [eaId];
                     res = await callEAService(win.services.Club.search(altCriteria));
                     items = extractItemsFromEaResponse(res);
-                    matches = items.filter(it => matchesCard(it, eaId, name));
+                    matches = items.filter(it => matchesCard(it, eaId, name, gem.rating));
                 }
 
                 if (matches.length > 0) {
@@ -2821,7 +2834,7 @@
                         const eaId = Number(card.eaId);
                         if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) continue;
 
-                        const matches = ptPlayers.filter(it => matchesCard(it, eaId, card.name) && isItemActuallyInClub(it, eaId));
+                        const matches = ptPlayers.filter(it => matchesCard(it, eaId, card.name, card.rating) && isItemActuallyInClub(it, eaId));
                         if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) {
                             State.clubScanned[eaId] = true;
                             continue;
@@ -2876,7 +2889,7 @@
                         for (const card of chunk) {
                             const eaId = Number(card.eaId);
                             if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) continue;
-                            const match = items.find(it => matchesCard(it, eaId, card.name));
+                            const match = items.find(it => matchesCard(it, eaId, card.name, card.rating));
                             if (match) {
                                 match._isTradeable = isItemTradeable(match);
                                 State.clubMatches[eaId] = match;
@@ -3240,7 +3253,7 @@
 
                 const res = await callEAService(services.Item.searchTransferMarket(criteria, 1));
                 const pageItems = extractItemsFromEaResponse(res);
-                const validItems = (pageItems || []).filter(it => matchesCard(it, eaId, gem.name));
+                const validItems = (pageItems || []).filter(it => matchesCard(it, eaId, gem.name, gem.rating));
 
                 allItems = validItems;
 
@@ -3298,7 +3311,7 @@
                     if (!State.abortMarketCrawl[eaId] && !State.forceCancelAllOperations && (State.isBatchRunning || !isAutomated)) {
                         const subRes = await callEAService(services.Item.searchTransferMarket(subCriteria, 1));
                         const subPageItems = extractItemsFromEaResponse(subRes);
-                        const subValidItems = (subPageItems || []).filter(it => matchesCard(it, eaId, gem.name));
+                        const subValidItems = (subPageItems || []).filter(it => matchesCard(it, eaId, gem.name, gem.rating));
                         if (subValidItems.length > 0) {
                             allItems = subValidItems;
                             filterLabel = `≤ ${formatCoins(checkMaxBuy)} (piso verificado)`;
@@ -3779,17 +3792,42 @@
         State.forceCancelAllOperations = false;
         renderBatchControls();
 
+        // Sincronizar rápido transferibles en RAM para asegurar que ninguna carta recién listada sea consultada
+        try {
+            const trItems = await fetchAllTransferListItems(false);
+            if (trItems.length > 0) classifyAndSyncTransferItems(trItems);
+        } catch (e) { }
+
+        const hasScanned = Object.keys(State.clubMatches).length > 0 ||
+            Object.keys(State.transferMatches).length > 0 ||
+            Object.keys(State.sellingMatches).length > 0 ||
+            Object.keys(State.soldMatches).length > 0 ||
+            State.lastScanTimestamp > 0;
+
         const gemsToCheck = State.gems.filter(g => {
             const eaId = Number(g.eaId);
-            if (State.hideSoldOrMissing) {
-                const inClub = State.clubMatches[eaId];
-                const inTransfer = State.transferMatches[eaId];
-                const selling = State.sellingMatches[eaId];
-                const sold = State.soldMatches[eaId];
-                if (sold || (!inClub && !inTransfer && !selling)) return false;
+            const inClub = State.clubMatches[eaId];
+            const inTransfer = State.transferMatches[eaId];
+            const selling = State.sellingMatches[eaId];
+            const sold = State.soldMatches[eaId];
+            const market = State.marketPrices[eaId];
+
+            // Excluir SIEMPRE las cartas que ya están listadas en el mercado o ya fueron vendidas
+            if (selling || sold || (market && market.listed)) return false;
+
+            // Si ya se escaneó el club/transferibles, chequear solo las cartas disponibles para listar
+            if (hasScanned) {
+                return Boolean(inTransfer || (inClub && isItemTradeable(inClub)));
             }
             return true;
         });
+
+        if (gemsToCheck.length === 0) {
+            State.isBatchRunning = false;
+            notificar("No hay cartas disponibles para listar que requieran chequeo de mercado.", "#ffaa00");
+            renderBatchControls();
+            return;
+        }
 
         for (const gem of gemsToCheck) {
             delete State.marketPrices[gem.eaId];
@@ -4013,7 +4051,7 @@
                     for (const p of State.futbinSbcData.players) {
                         const eaId = Number(p.eaId);
                         if (eaId > 0 && !isLiveEAItem(State.clubMatches[eaId]) && !isLiveEAItem(State.transferMatches[eaId]) && !State.sellingMatches[eaId] && !State.soldMatches[eaId]) {
-                            const matches = ptDebug.players.filter(it => matchesCard(it, eaId, p.name) && isItemActuallyInClub(it, eaId));
+                            const matches = ptDebug.players.filter(it => matchesCard(it, eaId, p.name, p.rating) && isItemActuallyInClub(it, eaId));
                             if (State.sellingMatches[eaId] || State.soldMatches[eaId] || State.transferMatches[eaId]) {
                                 State.clubScanned[eaId] = true;
                                 continue;
@@ -4123,9 +4161,33 @@
         }
         if (!State.futbinSbcData || !State.futbinSbcData.players) return;
 
-        const playersToCheck = getFilteredFutbinPlayers();
+        // Sincronizar rápido transferibles en RAM para excluir cualquier carta recién listada
+        try {
+            const trItems = await fetchAllTransferListItems(false);
+            if (trItems.length > 0) classifyAndSyncTransferItems(trItems);
+        } catch (e) { }
+
+        const playersToCheck = getFilteredFutbinPlayers().filter(p => {
+            const eaId = Number(p.eaId);
+            const inClub = State.clubMatches[eaId];
+            const inTransfer = State.transferMatches[eaId];
+            const selling = State.sellingMatches[eaId];
+            const sold = State.soldMatches[eaId];
+            const market = State.marketPrices[eaId];
+
+            // Excluir SIEMPRE las cartas que ya están listadas en el mercado o ya fueron vendidas
+            if (selling || sold || (market && market.listed)) return false;
+
+            // Si el filtro "En Mi Club" está activo, chequear únicamente las cartas disponibles para listar
+            if (State.futbinFilterOnlyInClub) {
+                return Boolean(inTransfer || (inClub && isItemTradeable(inClub)));
+            }
+            // Si está en el club pero es intransferible, tampoco chequear
+            if (inClub && !inTransfer && !isItemTradeable(inClub)) return false;
+            return true;
+        });
         if (playersToCheck.length === 0) {
-            notificar("No hay jugadores que coincidan con los filtros para consultar.", "#ffaa00");
+            notificar("No hay jugadores disponibles para listar que coincidan con los filtros.", "#ffaa00");
             return;
         }
 
