@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FC 27 - FUT.GG Hidden Gems & FUTBIN SBC Helper
 // @namespace    https://todout.github.io/FUT.GG-Hidden-Gems/
-// @version      1.17.4
-// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: chequeo de mercado exclusivo para cartas disponibles para listar (omite ya listadas), distinción de versiones IF vs Oro, y ajuste -/+ sin lag.
+// @version      1.17.5
+// @description  Automatiza el flujo de Hidden Gems de FUT.GG y Soluciones SBC de FUTBIN en la Web App de EA FC 27: catálogo actualizado con Freaky Zombie y nuevas Marquesinas, chequeo de mercado exclusivo para cartas disponibles para listar, y ajuste -/+ sin lag.
 // @author       todout
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
@@ -1811,14 +1811,22 @@
 
     // Semillas de desafíos TEMPORALES activos (con fechas de expiración exactas)
     const SEED_TEMPORARY_SBC_CATALOG = [
-        // Boo-Hoo Party (Desafío nuevo activo: 114/boo-hoo-party)
+        // Freaky Zombie (Desafío nuevo de Halloween: 75/freaky-zombie)
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Freaky Zombie", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/75/freaky-zombie", isPermanent: false, expiresAt: new Date("2026-11-06T18:00:00Z").getTime() },
+        // Boo-Hoo Party (114/boo-hoo-party)
         { group: "🎃 Eventos y Puzzles", title: "🎃 Boo-Hoo Party", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/114/boo-hoo-party", isPermanent: false, expiresAt: new Date("2026-11-04T18:00:00Z").getTime() },
-        // Spooky Nights (expira el 3 de noviembre 2026 18:00 UTC)
-        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights", isPermanent: false, expiresAt: new Date("2026-11-03T18:00:00Z").getTime() }
+        // Spooky Nights (112/spooky-nights)
+        { group: "🎃 Eventos y Puzzles", title: "🎃 Spooky Nights", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/112/spooky-nights", isPermanent: false, expiresAt: new Date("2026-11-03T18:00:00Z").getTime() },
+
+        // Partidos de Marquesina activos (Marquee Matchups - 4 desafíos semanales, expiran el 5 de noviembre 2026)
+        { group: "🧩 Marquee Matchups", title: "⚽ 1. Villarreal CF v RCD Espanyol", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/115/villarreal-cf-v-rcd-espanyol", isPermanent: false, expiresAt: new Date("2026-11-05T18:00:00Z").getTime(), groupOrder: 1 },
+        { group: "🧩 Marquee Matchups", title: "⚽ 2. Fc Bayern Munchen V Borussia Dortmund", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/116/fc-bayern-munchen-v-borussia-dortmund", isPermanent: false, expiresAt: new Date("2026-11-05T18:00:00Z").getTime(), groupOrder: 2 },
+        { group: "🧩 Marquee Matchups", title: "⚽ 3. Milano Fc V Lombardia Fc", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/117/milano-fc-v-lombardia-fc", isPermanent: false, expiresAt: new Date("2026-11-05T18:00:00Z").getTime(), groupOrder: 3 },
+        { group: "🧩 Marquee Matchups", title: "⚽ 4. Liverpool V Arsenal", url: "https://www.futbin.com/27/squad-building-challenges/Challenges/118/liverpool-v-arsenal", isPermanent: false, expiresAt: new Date("2026-11-05T18:00:00Z").getTime(), groupOrder: 4 }
     ];
 
     const DEFAULT_FUTBIN_SBC_CATALOG = DEFAULT_PERMANENT_SBC_CATALOG;
-    const SCRIPT_CATALOG_VERSION = "1.17.4";
+    const SCRIPT_CATALOG_VERSION = "1.17.5";
 
     function purgeExpiredSbcs(manual = true) {
         const catalog = GM_getValue('futbin_sbc_catalog', []);
