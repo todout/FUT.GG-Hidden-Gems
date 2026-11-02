@@ -1,13 +1,17 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FUT.GG Hidden Gems Helper | EA FC 27 Web App</title>
-    <meta name="description" content="Sincroniza tus Hidden Gems de FUT.GG directamente en la Web App de EA Sports FC 27. Auto-escaneo de mercado, detección de snipes y listado inteligente a 1 clic.">
+    <meta name="description"
+        content="Sincroniza tus Hidden Gems de FUT.GG directamente en la Web App de EA Sports FC 27. Auto-escaneo de mercado, detección de snipes y listado inteligente a 1 clic.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap"
+        rel="stylesheet">
     <link rel="icon" href="https://assets.fut.gg/frontend/site-images/site/favicon.png">
     <style>
         :root {
@@ -48,7 +52,7 @@
             line-height: 1.55;
             min-height: 100vh;
             overflow-x: hidden;
-            background-image: 
+            background-image:
                 radial-gradient(circle at 10% 10%, rgba(255, 84, 0, 0.06) 0%, transparent 40%),
                 radial-gradient(circle at 90% 25%, rgba(13, 242, 201, 0.05) 0%, transparent 45%),
                 radial-gradient(circle at 50% 90%, rgba(59, 130, 246, 0.04) 0%, transparent 50%);
@@ -278,8 +282,13 @@
             font-family: 'Red Hat Display', sans-serif;
         }
 
-        .stat-value.mint { color: var(--fut-mint); }
-        .stat-value.orange { color: var(--fut-orange); }
+        .stat-value.mint {
+            color: var(--fut-mint);
+        }
+
+        .stat-value.orange {
+            color: var(--fut-orange);
+        }
 
         .stat-desc {
             font-size: 0.78rem;
@@ -484,9 +493,23 @@
             letter-spacing: 0.05em;
         }
 
-        .tag-orange { background: rgba(255, 84, 0, 0.12); color: var(--fut-orange); border: 1px solid rgba(255, 84, 0, 0.25); }
-        .tag-mint { background: rgba(13, 242, 201, 0.12); color: var(--fut-mint); border: 1px solid rgba(13, 242, 201, 0.25); }
-        .tag-blue { background: rgba(59, 130, 246, 0.12); color: var(--fut-blue); border: 1px solid rgba(59, 130, 246, 0.25); }
+        .tag-orange {
+            background: rgba(255, 84, 0, 0.12);
+            color: var(--fut-orange);
+            border: 1px solid rgba(255, 84, 0, 0.25);
+        }
+
+        .tag-mint {
+            background: rgba(13, 242, 201, 0.12);
+            color: var(--fut-mint);
+            border: 1px solid rgba(13, 242, 201, 0.25);
+        }
+
+        .tag-blue {
+            background: rgba(59, 130, 246, 0.12);
+            color: var(--fut-blue);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+        }
 
         .feat-title {
             font-size: 1.2rem;
@@ -607,12 +630,22 @@
         }
 
         @media (max-width: 768px) {
-            .navbar .nav-links { display: none; }
-            .hero-title { font-size: 2.1rem; }
-            .shortcut-card { text-align: center; justify-content: center; }
+            .navbar .nav-links {
+                display: none;
+            }
+
+            .hero-title {
+                font-size: 2.1rem;
+            }
+
+            .shortcut-card {
+                text-align: center;
+                justify-content: center;
+            }
         }
     </style>
 </head>
+
 <body>
 
     <!-- Header / Navbar estilo FUT.GG -->
@@ -630,7 +663,8 @@
                 <a href="#pasos" class="nav-link">Instalación</a>
                 <a href="#funciones" class="nav-link">Funciones</a>
                 <a href="#faq" class="nav-link">Preguntas</a>
-                <a href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener" class="nav-link">GitHub</a>
+                <a href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener"
+                    class="nav-link">GitHub</a>
             </nav>
 
             <div style="display:flex; gap:10px;">
@@ -659,17 +693,20 @@
             </h1>
 
             <p class="hero-desc">
-                Automatiza el flujo completo: consulta el mercado de forma inteligente con filtro de precio acotado (estilo Paletools), detecta snipes o errores de precio y lista todas tus joyas con 1 solo clic.
+                Automatiza el flujo completo: consulta el mercado de forma inteligente con filtro de precio acotado
+                (estilo Paletools), detecta snipes o errores de precio y lista todas tus joyas con 1 solo clic.
             </p>
 
             <div class="hero-cta">
-                <a id="btn-install-hero" href="fc27_futgg_gems_helper.user.js" class="btn btn-orange" style="padding: 14px 28px; font-size: 1rem;">
+                <a id="btn-install-hero" href="fc27_futgg_gems_helper.user.js" class="btn btn-orange"
+                    style="padding: 14px 28px; font-size: 1rem;">
                     🚀 Instalar Script en Tampermonkey
                 </a>
                 <button id="btn-copy-hero" class="btn btn-surface" style="padding: 14px 22px;" onclick="copyCode()">
                     📋 Copiar Código del Script
                 </button>
-                <a id="btn-github-hero" href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener" class="btn btn-surface" style="padding: 14px 22px;">
+                <a id="btn-github-hero" href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank"
+                    rel="noopener" class="btn btn-surface" style="padding: 14px 22px;">
                     🐙 Repositorio GitHub
                 </a>
             </div>
@@ -715,9 +752,12 @@
                     </p>
                     <div class="step-footer">
                         <div class="store-links">
-                            <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" rel="noopener" class="store-badge">Chrome / Brave</a>
-                            <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener" class="store-badge">Edge</a>
-                            <a href="https://addons.mozilla.org/es/firefox/addon/tampermonkey/" target="_blank" rel="noopener" class="store-badge">Firefox</a>
+                            <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo"
+                                target="_blank" rel="noopener" class="store-badge">Chrome / Brave</a>
+                            <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd"
+                                target="_blank" rel="noopener" class="store-badge">Edge</a>
+                            <a href="https://addons.mozilla.org/es/firefox/addon/tampermonkey/" target="_blank"
+                                rel="noopener" class="store-badge">Firefox</a>
                         </div>
                     </div>
                 </div>
@@ -730,7 +770,8 @@
                     </div>
                     <h3 class="step-title">Instala el Script</h3>
                     <p class="step-text">
-                        Haz clic en el botón de abajo. Tampermonkey detectará el archivo y te mostrará la pantalla de instalación con 1 clic.
+                        Haz clic en el botón de abajo. Tampermonkey detectará el archivo y te mostrará la pantalla de
+                        instalación con 1 clic.
                     </p>
                     <div class="step-footer">
                         <a href="fc27_futgg_gems_helper.user.js" class="btn btn-orange" style="width: 100%;">
@@ -747,10 +788,13 @@
                     </div>
                     <h3 class="step-title">Abre FUT.GG</h3>
                     <p class="step-text">
-                        Abre una pestaña en <a href="https://www.fut.gg/gg-club/hidden-gems/" target="_blank" rel="noopener" style="color:var(--fut-mint); font-weight:700;">fut.gg</a> con tu cuenta iniciada. Verás un cartel verde confirmando que tus gemas están listas.
+                        Abre una pestaña en <a href="https://www.fut.gg/gg-club/hidden-gems/" target="_blank"
+                            rel="noopener" style="color:var(--fut-mint); font-weight:700;">fut.gg</a> con tu cuenta
+                        iniciada. Verás un cartel verde confirmando que tus gemas están listas.
                     </p>
                     <div class="step-footer">
-                        <a href="https://www.fut.gg/gg-club/hidden-gems/" target="_blank" rel="noopener" class="btn btn-surface" style="width: 100%;">
+                        <a href="https://www.fut.gg/gg-club/hidden-gems/" target="_blank" rel="noopener"
+                            class="btn btn-surface" style="width: 100%;">
                             🌐 Abrir FUT.GG Gems
                         </a>
                     </div>
@@ -764,10 +808,12 @@
                     </div>
                     <h3 class="step-title">Abre FC Web App</h3>
                     <p class="step-text">
-                        Entra a la Web App oficial de EA FC 27. En la esquina inferior derecha verás el botón flotante <strong style="color:var(--fut-mint);">💎 [N]</strong> listo para usar.
+                        Entra a la Web App oficial de EA FC 27. En la esquina inferior derecha verás el botón flotante
+                        <strong style="color:var(--fut-mint);">💎 [N]</strong> listo para usar.
                     </p>
                     <div class="step-footer">
-                        <a href="https://www.ea.com/ea-sports-fc/ultimate-team/web-app/" target="_blank" rel="noopener" class="btn btn-mint" style="width: 100%;">
+                        <a href="https://www.ea.com/ea-sports-fc/ultimate-team/web-app/" target="_blank" rel="noopener"
+                            class="btn btn-mint" style="width: 100%;">
                             ⚽ Ir a la Web App
                         </a>
                     </div>
@@ -779,7 +825,8 @@
         <div class="shortcut-card">
             <div class="shortcut-text">
                 <h4>Atajo de Teclado Rápido</h4>
-                <p>Presiona la combinación en cualquier pantalla de la Web App para desplegar el panel de gemas al instante.</p>
+                <p>Presiona la combinación en cualquier pantalla de la Web App para desplegar el panel de gemas al
+                    instante.</p>
             </div>
             <div class="keys-wrap">
                 <span class="kbd">Alt</span>
@@ -800,7 +847,8 @@
                     <span class="feat-tag tag-orange">Seguridad Total</span>
                     <h3 class="feat-title">🛡️ Comportamiento Humano Anti-Ban</h3>
                     <p class="feat-desc">
-                        Búsquedas con esperas aleatorias (Gaussian Jitter de 3.0s a 4.5s), pausas preventivas cada 10 búsquedas y Circuit Breaker automático ante límites de EA.
+                        Búsquedas con esperas aleatorias (Gaussian Jitter de 3.0s a 4.5s), pausas preventivas cada 10
+                        búsquedas y Circuit Breaker automático ante límites de EA.
                     </p>
                 </div>
 
@@ -808,7 +856,8 @@
                     <span class="feat-tag tag-mint">Anti-Ban & Veloz</span>
                     <h3 class="feat-title">📊 Búsqueda Inteligente & Corte Temprano</h3>
                     <p class="feat-desc">
-                        Filtra por precio acotado (estilo Paletools) resolviendo en 1 sola petición lo que antes tomaba 30 páginas. Se detiene inmediatamente al confirmar el piso real del mercado.
+                        Filtra por precio acotado (estilo Paletools) resolviendo en 1 sola petición lo que antes tomaba
+                        30 páginas. Se detiene inmediatamente al confirmar el piso real del mercado.
                     </p>
                 </div>
 
@@ -816,7 +865,8 @@
                     <span class="feat-tag tag-blue">Protección de Monedas</span>
                     <h3 class="feat-title">⚠️ Detección de Snipes y Errores</h3>
                     <p class="feat-desc">
-                        Si alguien listó una carta por error a un precio ridículamente bajo, el script lo detecta y no basa el precio en ese error, protegiendo tus monedas.
+                        Si alguien listó una carta por error a un precio ridículamente bajo, el script lo detecta y no
+                        basa el precio en ese error, protegiendo tus monedas.
                     </p>
                 </div>
 
@@ -824,7 +874,8 @@
                     <span class="feat-tag tag-orange">Automatización</span>
                     <h3 class="feat-title">📥 Mover y Listar a 1 Clic</h3>
                     <p class="feat-desc">
-                        Mueve tus gemas del club a la lista de transferibles y lístalas calculando el precio óptimo y la puja inicial correcta con un solo clic.
+                        Mueve tus gemas del club a la lista de transferibles y lístalas calculando el precio óptimo y la
+                        puja inicial correcta con un solo clic.
                     </p>
                 </div>
 
@@ -832,7 +883,8 @@
                     <span class="feat-tag tag-mint">En Vivo</span>
                     <h3 class="feat-title">🔔 Alertas & Auto-Sync por Sobres</h3>
                     <p class="feat-desc">
-                        Monitorea tu club cada 15 minutos y sincroniza automáticamente con FUT.GG al detectar apertura de sobres o tras concluir el cooldown de 30 minutos.
+                        Monitorea tu club cada 15 minutos y sincroniza automáticamente con FUT.GG al detectar apertura
+                        de sobres o tras concluir el cooldown de 30 minutos.
                     </p>
                 </div>
 
@@ -840,7 +892,8 @@
                     <span class="feat-tag tag-blue">Ecosistema</span>
                     <h3 class="feat-title">🤝 Compatible con Paletools</h3>
                     <p class="feat-desc">
-                        Funciona a la perfección junto a Paletools y FUT Enhancer sin interferir con sus atajos ni alterar tu interfaz preferida del juego.
+                        Funciona a la perfección junto a Paletools y FUT Enhancer sin interferir con sus atajos ni
+                        alterar tu interfaz preferida del juego.
                     </p>
                 </div>
             </div>
@@ -860,7 +913,9 @@
                         <span class="faq-cross">+</span>
                     </div>
                     <div class="faq-body">
-                        Al tener tu cuenta abierta en <a href="https://www.fut.gg" target="_blank" rel="noopener" style="color:var(--fut-mint);">fut.gg</a>, el script detecta automáticamente tu lista de Hidden Gems y la sincroniza en tu navegador para que aparezca en la Web App de FC 27.
+                        Al tener tu cuenta abierta en <a href="https://www.fut.gg" target="_blank" rel="noopener"
+                            style="color:var(--fut-mint);">fut.gg</a>, el script detecta automáticamente tu lista de
+                        Hidden Gems y la sincroniza en tu navegador para que aparezca en la Web App de FC 27.
                     </div>
                 </div>
 
@@ -870,7 +925,8 @@
                         <span class="faq-cross">+</span>
                     </div>
                     <div class="faq-body">
-                        Sí, al 100%. El helper fue diseñado específicamente para complementar Paletools. Puedes usar ambos scripts simultáneamente sin ningún tipo de conflicto.
+                        Sí, al 100%. El helper fue diseñado específicamente para complementar Paletools. Puedes usar
+                        ambos scripts simultáneamente sin ningún tipo de conflicto.
                     </div>
                 </div>
 
@@ -880,7 +936,8 @@
                         <span class="faq-cross">+</span>
                     </div>
                     <div class="faq-body">
-                        En cualquier navegador compatible con extensiones: Google Chrome, Brave, Microsoft Edge, Mozilla Firefox, Opera o Vivaldi (tanto en Windows como en macOS y Linux).
+                        En cualquier navegador compatible con extensiones: Google Chrome, Brave, Microsoft Edge, Mozilla
+                        Firefox, Opera o Vivaldi (tanto en Windows como en macOS y Linux).
                     </div>
                 </div>
 
@@ -890,7 +947,9 @@
                         <span class="faq-cross">+</span>
                     </div>
                     <div class="faq-body">
-                        El script incluye enlaces de auto-actualización vinculados al repositorio de GitHub. Tampermonkey comprobará las novedades automáticamente y te notificará cuando haya una nueva versión disponible.
+                        El script incluye enlaces de auto-actualización vinculados al repositorio de GitHub.
+                        Tampermonkey comprobará las novedades automáticamente y te notificará cuando haya una nueva
+                        versión disponible.
                     </div>
                 </div>
             </div>
@@ -911,7 +970,8 @@
                 <strong>FC 27 - FUT.GG Hidden Gems Auto-Workflow Helper</strong> • v1.17.2
             </p>
             <p style="margin-top: 6px; font-size: 0.82rem;">
-                Repositorio Oficial en GitHub: <a href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank" rel="noopener">todout/FUT.GG-Hidden-Gems</a>
+                Repositorio Oficial en GitHub: <a href="https://github.com/todout/FUT.GG-Hidden-Gems" target="_blank"
+                    rel="noopener">todout/FUT.GG-Hidden-Gems</a>
             </p>
             <p style="margin-top: 8px; font-size: 0.75rem; color: #475569;">
                 Herramienta comunitaria independiente para EA SPORTS FC 27 y FUT.GG.
@@ -962,4 +1022,5 @@
         });
     </script>
 </body>
+
 </html>
